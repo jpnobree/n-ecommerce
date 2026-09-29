@@ -3,9 +3,9 @@
 Spring Boot 4 (Java 21) + Angular 22 (SSR) + PostgreSQL 16 + Stripe. Requisitos e decisões: PRD no Claude Docs.
 
 ```
-backend/    API REST (Maven, Flyway, Spring Security)
+backend/    API REST (Maven, Flyway, Spring Security + JWT)
 frontend/   Angular com SSR
-docker-compose.yml   PostgreSQL (+ API em container)
+docker-compose.yml   PostgreSQL, Mailpit (SMTP de dev) e a API em container
 .github/workflows/   CI
 ```
 
@@ -14,14 +14,20 @@ docker-compose.yml   PostgreSQL (+ API em container)
 Pré-requisitos: Docker e Node 24. JDK 21 + Maven só se for rodar a API fora do Docker.
 
 ```bash
-docker compose up -d --build      # banco + API em http://localhost:8080
+docker compose up -d --build      # banco + Mailpit + API em http://localhost:8080
 npm --prefix frontend install
 npm --prefix frontend start       # loja em http://localhost:4200 (proxy /api -> 8080)
 ```
 
-A home mostra `API: UP` quando frontend, API e banco estão conectados.
+- A home mostra `API: UP` quando frontend, API e banco estão conectados.
+- E-mails (confirmação, redefinição de senha) aparecem em http://localhost:8025.
+- Admin de desenvolvimento: criado no primeiro start com `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD` do `docker-compose.yml`.
+- A API do compose sobe com o perfil `seed`: catálogo de demonstração com 2 mil produtos, 11 categorias, cores,
+  tamanhos, coleções, estoque e promoções (`db/seed/R__dev_seed.sql`; só roda se não houver produtos).
+  Fora do Docker, ative com `SPRING_PROFILES_ACTIVE=seed`. **Nunca em produção.**
+- Sem `JWT_PRIVATE_KEY` a API gera um par de chaves efêmero: sessões caem a cada restart da API (só em dev; hml/prod recusam subir sem chaves).
 
-API fora do Docker (hot reload pela IDE): `docker compose up -d db` e rode `AtelierApplication`.
+API fora do Docker (hot reload pela IDE): `docker compose up -d db mail` e rode `AtelierApplication`.
 
 ## Testes
 
@@ -42,21 +48,47 @@ docker run --rm -v "$PWD/backend:/src" -v atelier-m2:/root/.m2 -v /var/run/docke
 | URL | Uso |
 | --- | --- |
 | `GET /api/status` | status e versão |
+| `/api/auth/*`, `/api/me/*` | autenticação, conta e endereços (contrato no Swagger) |
+| `GET /api/products` | listagem com filtros e facetas: `category`, `collection`, `sizes`, `colors`, `gender`, `minPrice`/`maxPrice` (centavos), `inStock`, `onSale`, `sort` (`newest`, `best_sellers`, `price_asc`, `price_desc`), `page`, `pageSize` (≤ 48) |
+| `GET /api/categories`, `/api/categories/page?path=`, `/api/collections` | árvore de categorias, página de categoria, coleções |
+| `/api/admin/categories`, `/collections`, `/colors`, `/sizes`, `/products` | cadastro do catálogo (escrita: ADMIN; leitura e estoque: ADMIN e OPERATOR) |
 | `/actuator/health/liveness`, `/readiness` | probes (porta 8081 em hml/prod) |
 | `/actuator/prometheus` | métricas (porta 8081 em hml/prod) |
 | `/swagger-ui.html` | documentação OpenAPI (desligada em hml/prod) |
 
+## Autenticação (resumo)
+
+- Access token JWT RS256 de 15 min, só em memória no navegador.
+- Refresh token opaco de 30 dias em cookie `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, rotacionado a cada uso.
+  Reuso de um token já rotacionado (fora de uma janela de 10 s para abas simultâneas) derruba todas as sessões daquela família.
+- Troca/redefinição de senha e "sair de todos" invalidam na hora os access tokens emitidos (claim `tv`).
+- Rotas que leem o cookie exigem `X-Requested-With: XMLHttpRequest` (proteção CSRF).
+- Rate limit por IP nas rotas de `/api/auth` e bloqueio progressivo da conta após 5 senhas erradas.
+
 ## Configuração por ambiente
 
-Perfis Spring: padrão (dev), `hml`, `prod` (`SPRING_PROFILES_ACTIVE`). Em hml/prod: logs JSON, Swagger desligado, actuator na 8081.
+Perfis Spring: padrão (dev), `hml`, `prod` (`SPRING_PROFILES_ACTIVE`). Em hml/prod: logs JSON, Swagger desligado,
+actuator na 8081, IP do cliente lido de `X-Forwarded-For` (o load balancer deve sobrescrever esse header).
 
 | Variável | Onde | Descrição |
 | --- | --- | --- |
 | `DB_URL`, `DB_USER`, `DB_PASSWORD` | API | conexão PostgreSQL |
+| `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY` | API | par RSA em PEM (PKCS#8 / X.509); **obrigatório em hml/prod** |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` | API | SMTP (padrão: Mailpit em localhost:1025) |
+| `APP_MAIL_FROM` | API | remetente dos e-mails |
+| `APP_FRONTEND_URL` | API | base dos links enviados por e-mail |
+| `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | API | cria o primeiro ADMIN se não houver nenhum (senha com 12+ caracteres) |
 | `APP_VERSION` | API | versão exibida em `/api/status` (usar o SHA do commit) |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | API | Sentry; vazio = desligado |
 | `LOG_FORMAT` | API | `logstash` para logs JSON também em dev |
 | `NG_ALLOWED_HOSTS` | SSR | hosts aceitos pelo servidor SSR (ex.: `www.loja.com.br`) |
 | `PORT` | SSR | porta do servidor Node (padrão 4000) |
+
+Gerar o par de chaves JWT:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
+openssl rsa -in jwt-private.pem -pubout -out jwt-public.pem
+```
 
 Segredos nunca vão para o repositório; em hml/prod vêm do secret manager do provedor.

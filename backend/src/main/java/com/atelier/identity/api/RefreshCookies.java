@@ -1,0 +1,44 @@
+package com.atelier.identity.api;
+
+import com.atelier.identity.AuthProperties;
+import com.atelier.identity.api.dto.AuthResponse;
+import com.atelier.identity.service.SessionService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+
+import java.time.Clock;
+import java.time.Duration;
+
+/** Cookie do refresh token: HttpOnly, SameSite=Strict, restrito a /api/auth (PRD, seção 8). */
+@Component
+class RefreshCookies {
+
+    static final String NAME = "refresh_token";
+    private static final String PATH = "/api/auth";
+
+    private final AuthProperties props;
+    private final Clock clock;
+
+    RefreshCookies(AuthProperties props, Clock clock) {
+        this.props = props;
+        this.clock = clock;
+    }
+
+    ResponseEntity<AuthResponse> respond(HttpStatus status, SessionService.Session session) {
+        var cookie = base(session.refreshToken())
+                .maxAge(Duration.between(clock.instant(), session.refreshExpiresAt()))
+                .build();
+        return ResponseEntity.status(status).header(HttpHeaders.SET_COOKIE, cookie.toString()).body(AuthResponse.of(session));
+    }
+
+    String cleared() {
+        return base("").maxAge(0).build().toString();
+    }
+
+    private ResponseCookie.ResponseCookieBuilder base(String value) {
+        return ResponseCookie.from(NAME, value).httpOnly(true).secure(props.cookieSecure()).sameSite("Strict").path(PATH);
+    }
+}

@@ -1,0 +1,43 @@
+package com.atelier.shared.error;
+
+import org.springframework.http.HttpStatus;
+
+/** Códigos de erro estáveis da API; o frontend traduz pelo código, não pelo texto. */
+public enum ErrorCode {
+    VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "Dados inválidos"),
+    NOT_FOUND(HttpStatus.NOT_FOUND, "Recurso não encontrado"),
+    CONFLICT(HttpStatus.CONFLICT, "Conflito com o estado atual"),
+    CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "O recurso foi alterado por outra operação"),
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "Muitas tentativas. Tente novamente mais tarde"),
+    CSRF_CHECK_FAILED(HttpStatus.FORBIDDEN, "Requisição recusada"),
+
+    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "E-mail ou senha inválidos"),
+    ACCOUNT_LOCKED(HttpStatus.FORBIDDEN, "Conta bloqueada temporariamente por tentativas inválidas"),
+    ACCOUNT_BLOCKED(HttpStatus.FORBIDDEN, "Conta bloqueada. Fale com o atendimento"),
+    EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "E-mail já cadastrado"),
+    REFRESH_INVALID(HttpStatus.UNAUTHORIZED, "Sessão expirada"),
+    REFRESH_REUSED(HttpStatus.UNAUTHORIZED, "Sessão encerrada por segurança"),
+    TOKEN_INVALID_OR_EXPIRED(HttpStatus.BAD_REQUEST, "Link inválido ou expirado"),
+    WRONG_PASSWORD(HttpStatus.UNPROCESSABLE_CONTENT, "Senha atual incorreta"),
+    CPF_IN_USE(HttpStatus.CONFLICT, "CPF já cadastrado em outra conta"),
+    ADDRESS_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Limite de endereços atingido"),
+
+    SLUG_TAKEN(HttpStatus.CONFLICT, "Slug já utilizado"),
+    SKU_TAKEN(HttpStatus.CONFLICT, "SKU já utilizado"),
+    CATEGORY_DEPTH_EXCEEDED(HttpStatus.UNPROCESSABLE_CONTENT, "Categorias aceitam no máximo 3 níveis"),
+    CATEGORY_CYCLE(HttpStatus.UNPROCESSABLE_CONTENT, "Uma categoria não pode ficar dentro de si mesma"),
+    CATEGORY_IN_USE(HttpStatus.CONFLICT, "Categoria com subcategorias ou produtos"),
+    PRODUCT_NOT_PUBLISHABLE(HttpStatus.UNPROCESSABLE_CONTENT, "Produto não pode ser publicado"),
+    PRODUCT_HAS_VARIANTS(HttpStatus.CONFLICT, "Produto com variantes não pode ser excluído; arquive-o"),
+    INVALID_SALE_PRICE(HttpStatus.UNPROCESSABLE_CONTENT, "Preço promocional deve ser menor que o preço cheio"),
+    STOCK_BELOW_RESERVED(HttpStatus.CONFLICT, "Estoque não pode ficar abaixo do reservado ou negativo"),
+    INVALID_FILTER(HttpStatus.BAD_REQUEST, "Filtro inválido");
+
+    public final HttpStatus status;
+    public final String title;
+
+    ErrorCode(HttpStatus status, String title) {
+        this.status = status;
+        this.title = title;
+    }
+}
