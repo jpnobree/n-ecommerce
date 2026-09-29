@@ -61,33 +61,51 @@ public class ProductListing {
         String where = productWhere(f, Facet.NONE);
         long total = jdbc.queryForObject("SELECT count(*) FROM product p WHERE " + where, params, Long.class);
 
-        params.addValue("limit", f.pageSize()).addValue("offset", f.page() * f.pageSize());
-        List<Row> rows = jdbc.query("""
-                SELECT p.id, p.slug, p.name, p.min_base_price, p.min_effective_price, p.has_stock, p.is_new, p.published_at
-                  FROM product p WHERE %s
-                 ORDER BY p.has_stock DESC, %s, p.id DESC
-                 LIMIT :limit OFFSET :offset
-                """.formatted(where, ORDER.get(f.sort())), params, (rs, n) -> new Row(
-                rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4), rs.getLong(5), rs.getBoolean(6),
-                rs.getBoolean(7), rs.getTimestamp(8) == null ? Instant.EPOCH : rs.getTimestamp(8).toInstant()));
-
-        Map<Long, List<ColorChip>> colors = colorsOf(rows.stream().map(Row::id).toList());
-        Instant newSince = clock.instant().minus(NEW_WINDOW);
-        List<ProductCard> cards = rows.stream().map(r -> {
-            boolean onSale = r.effective() < r.base();
-            List<String> badges = new ArrayList<>();
-            if (r.isNew() || r.publishedAt().isAfter(newSince)) badges.add("NEW");
-            if (onSale) badges.add("SALE");
-            return new ProductCard(r.id(), r.slug(), r.name(), r.base(), onSale ? r.effective() : null, "BRL",
-                    null, colors.getOrDefault(r.id(), List.of()), r.inStock(), badges);
-        }).toList();
+        String order = f.sort() == Sort.relevance && f.query() != null
+                ? "ts_rank(p.search_vector, websearch_to_tsquery('portuguese', unaccent(:q))) DESC"
+                : ORDER.get(f.sort() == Sort.relevance ? Sort.newest : f.sort());
+        List<ProductCard> cards = cards(where, order, params, f.pageSize(), f.page() * f.pageSize());
 
         int totalPages = (int) Math.ceil(total / (double) f.pageSize());
         return new ListingResponse(cards, f.page(), f.pageSize(), total, totalPages, facets(f, params));
     }
 
     private record Row(Long id, String slug, String name, long base, long effective, boolean inStock, boolean isNew,
-                       Instant publishedAt) {}
+                       Instant publishedAt, String imageUrl) {}
+
+    /** Cards de produtos ativos em qualquer recorte (vitrines da home, relacionados). Esgotados sempre por último. */
+    public List<ProductCard> cards(String where, String order, MapSqlParameterSource params, int limit, int offset) {
+        params.addValue("limit", limit).addValue("offset", offset);
+        List<Row> rows = jdbc.query("""
+                SELECT p.id, p.slug, p.name, p.min_base_price, p.min_effective_price, p.has_stock, p.is_new, p.published_at,
+                       (SELECT pi.url FROM product_image pi WHERE pi.product_id = p.id
+                         ORDER BY pi.is_main DESC, pi.position, pi.id LIMIT 1)
+                  FROM product p WHERE p.status = 'ACTIVE' AND %s
+                 ORDER BY p.has_stock DESC, %s, p.id DESC
+                 LIMIT :limit OFFSET :offset
+                """.formatted(where, order), params, (rs, n) -> new Row(
+                rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4), rs.getLong(5), rs.getBoolean(6),
+                rs.getBoolean(7), rs.getTimestamp(8) == null ? Instant.EPOCH : rs.getTimestamp(8).toInstant(),
+                rs.getString(9)));
+
+        Map<Long, List<ColorChip>> colors = colorsOf(rows.stream().map(Row::id).toList());
+        Instant newSince = clock.instant().minus(NEW_WINDOW);
+        return rows.stream().map(r -> {
+            boolean onSale = r.effective() < r.base();
+            List<String> badges = new ArrayList<>();
+            if (r.isNew() || r.publishedAt().isAfter(newSince)) badges.add("NEW");
+            if (onSale) badges.add("SALE");
+            return new ProductCard(r.id(), r.slug(), r.name(), r.base(), onSale ? r.effective() : null, "BRL",
+                    r.imageUrl(), colors.getOrDefault(r.id(), List.of()), r.inStock(), badges);
+        }).toList();
+    }
+
+    /** Cards na ordem dos ids informados (ex.: "complete o look" definido no admin). */
+    public List<ProductCard> cardsByIds(List<Long> ids) {
+        if (ids.isEmpty()) return List.of();
+        List<ProductCard> found = cards("p.id IN (:ids)", "p.id", new MapSqlParameterSource("ids", ids), ids.size(), 0);
+        return ids.stream().flatMap(id -> found.stream().filter(c -> c.id().equals(id))).toList();
+    }
 
     // ---- facetas ----
 
@@ -141,6 +159,7 @@ public class ProductListing {
     private static String productWhere(ListingFilter f, Facet exclude) {
         List<String> c = new ArrayList<>();
         c.add("p.status = 'ACTIVE'");
+        if (f.query() != null) c.add("p.search_vector @@ websearch_to_tsquery('portuguese', unaccent(:q))");
         if (f.category() != null) {
             c.add("p.main_category_id IN (SELECT id FROM category WHERE active AND (slug_path = :category OR slug_path LIKE :categoryPrefix))");
         }
@@ -177,6 +196,7 @@ public class ProductListing {
 
     private static MapSqlParameterSource params(ListingFilter f) {
         var p = new MapSqlParameterSource();
+        if (f.query() != null) p.addValue("q", f.query());
         if (f.category() != null) p.addValue("category", f.category()).addValue("categoryPrefix", f.category() + "/%");
         if (!f.collections().isEmpty()) p.addValue("collections", f.collections());
         if (!f.sizes().isEmpty()) p.addValue("sizes", f.sizes());

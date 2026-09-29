@@ -36,6 +36,11 @@ public class Product {
     public int weightGrams;
     public String metaTitle;
     public String metaDescription;
+    public Long sizeChartId;
+
+    /** Palavras extras para a busca (ex.: "verão", "festa"). */
+    @Column(columnDefinition = "text[]")
+    public String[] tags = new String[0];
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "product_collection", joinColumns = @JoinColumn(name = "product_id"))

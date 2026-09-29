@@ -116,3 +116,79 @@ BEGIN
      WHERE p.id = agg.id;
 END
 $$;
+
+-- Fase 4: imagens de demonstração, tags, tabelas de medidas, "complete o look" e banners.
+-- Cada parte é idempotente (roda também sobre um banco que já tinha o catálogo da Fase 3).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM product_image) THEN
+        INSERT INTO product_image (product_id, url, alt_text, width, height, position, is_main)
+        SELECT p.id,
+               '/placeholders/' || CASE cat.slug
+                   WHEN 'vestidos' THEN 'vestido' WHEN 'blusas' THEN 'blusa' WHEN 'calcas' THEN 'calca'
+                   WHEN 'saias' THEN 'saia' WHEN 'camisetas' THEN 'camiseta' WHEN 'jaquetas' THEN 'jaqueta'
+                   WHEN 'camisas' THEN 'camisa' WHEN 'bolsas' THEN 'bolsa' WHEN 'bones' THEN 'bone' ELSE 'cinto' END || '.svg',
+               p.name || ' - foto principal', 1200, 1600, 0, true
+          FROM product p JOIN category cat ON cat.id = p.main_category_id;
+    END IF;
+
+    UPDATE product p SET tags = ARRAY['verão', 'praia', 'leve']
+     WHERE tags = '{}' AND EXISTS (SELECT 1 FROM product_collection pc JOIN collection c ON c.id = pc.collection_id
+                                    WHERE pc.product_id = p.id AND c.slug = 'verao-2027');
+    UPDATE product p SET tags = ARRAY['trabalho', 'social']
+     WHERE tags = '{}' AND EXISTS (SELECT 1 FROM product_collection pc JOIN collection c ON c.id = pc.collection_id
+                                    WHERE pc.product_id = p.id AND c.slug = 'alfaiataria');
+
+    INSERT INTO size_chart (name, content) VALUES
+        ('Roupas (PP a GG)', '{"columns": ["Tamanho", "Busto (cm)", "Cintura (cm)", "Quadril (cm)"],
+                              "rows": [["PP", "78-82", "60-64", "86-90"], ["P", "82-86", "64-68", "90-94"],
+                                       ["M", "86-92", "68-74", "94-100"], ["G", "92-98", "74-80", "100-106"],
+                                       ["GG", "98-106", "80-88", "106-114"]]}'),
+        ('Calças (36 a 46)', '{"columns": ["Tamanho", "Cintura (cm)", "Quadril (cm)"],
+                              "rows": [["36", "66", "92"], ["38", "70", "96"], ["40", "74", "100"],
+                                       ["42", "78", "104"], ["44", "82", "108"], ["46", "86", "112"]]}')
+    ON CONFLICT (name) DO NOTHING;
+
+    UPDATE product p SET size_chart_id = sc.id
+      FROM category cat, size_chart sc
+     WHERE p.size_chart_id IS NULL AND cat.id = p.main_category_id
+       AND ((cat.slug = 'calcas' AND sc.name = 'Calças (36 a 46)')
+            OR (cat.slug IN ('vestidos', 'blusas', 'saias', 'camisetas', 'jaquetas', 'camisas') AND sc.name = 'Roupas (PP a GG)'));
+
+    IF NOT EXISTS (SELECT 1 FROM product_related) THEN
+        INSERT INTO product_related (product_id, related_id, position)
+        SELECT p.id, r.id, x.pos
+          FROM product p
+          CROSS JOIN LATERAL (VALUES (0, 13), (1, 29), (2, 47)) AS x(pos, step)
+          JOIN product r ON r.id = (p.id + x.step - 1) % 2000 + 1 AND r.id <> p.id
+        ON CONFLICT DO NOTHING;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM banner) THEN
+        INSERT INTO banner (position, title, subtitle, cta_label, link_url, image_desktop_url, image_mobile_url, sort_order) VALUES
+            ('HERO', 'Verão 2027', 'Linho, algodão e cores da estação.', 'Ver coleção', '/colecao/verao-2027', '/placeholders/hero.svg', '/placeholders/campanha-1.svg', 1),
+            ('CAMPAIGN', 'Essenciais', 'Peças-base para todos os dias.', 'Descobrir', '/colecao/essenciais', '/placeholders/campanha-1.svg', NULL, 1),
+            ('CAMPAIGN', 'Alfaiataria', 'Cortes precisos, tecidos nobres.', 'Descobrir', '/colecao/alfaiataria', '/placeholders/campanha-2.svg', NULL, 2),
+            ('STRIP', 'Frete grátis acima de R$ 299', NULL, NULL, '/promocoes', NULL, NULL, 1);
+    END IF;
+
+    -- Tags mudaram: refaz o documento de busca (mesmo SQL de ProductDenormalizer.SEARCH).
+    UPDATE product p
+       SET search_name = lower(unaccent(p.name)),
+           search_vector =
+               setweight(to_tsvector('portuguese', unaccent(p.name)), 'A')
+            || setweight(to_tsvector('portuguese', unaccent(array_to_string(p.tags, ' ') || ' ' || coalesce(src.categories, ''))), 'B')
+            || setweight(to_tsvector('portuguese', unaccent(coalesce(src.collections, '') || ' ' || coalesce(p.material, '') || ' ' || coalesce(src.colors, ''))), 'C')
+            || setweight(to_tsvector('portuguese', unaccent(coalesce(p.description, ''))), 'D')
+      FROM (SELECT p2.id,
+                   (SELECT string_agg(a.name, ' ') FROM category c
+                      JOIN category a ON c.slug_path = a.slug_path OR c.slug_path LIKE a.slug_path || '/%'
+                     WHERE c.id = p2.main_category_id) AS categories,
+                   (SELECT string_agg(co.name, ' ') FROM product_collection pc
+                      JOIN collection co ON co.id = pc.collection_id WHERE pc.product_id = p2.id) AS collections,
+                   (SELECT string_agg(DISTINCT cl.name, ' ') FROM product_variant v
+                      JOIN color cl ON cl.id = v.color_id WHERE v.product_id = p2.id AND v.active) AS colors
+              FROM product p2) src
+     WHERE p.id = src.id;
+END
+$$;

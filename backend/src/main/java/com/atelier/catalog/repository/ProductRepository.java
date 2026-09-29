@@ -14,6 +14,8 @@ public interface ProductRepository extends JpaRepository<Product, Long>, JpaSpec
 
     boolean existsByMainCategoryId(Long categoryId);
 
+    java.util.Optional<Product> findBySlugAndStatus(String slug, ProductStatus status);
+
     /** Busca do admin: nome ou SKU base contém o texto; status opcional. */
     static Specification<Product> adminSearch(String q, ProductStatus status) {
         Specification<Product> spec = (root, query, cb) -> cb.conjunction();

@@ -3,6 +3,7 @@ package com.atelier.catalog.api.dto;
 import com.atelier.catalog.domain.Gender;
 import com.atelier.catalog.domain.Product;
 import com.atelier.catalog.domain.ProductStatus;
+import com.atelier.catalog.domain.ProductImage;
 import com.atelier.catalog.domain.ProductVariant;
 import com.atelier.catalog.service.InventoryService;
 import jakarta.validation.constraints.*;
@@ -33,6 +34,8 @@ public final class ProductAdminDtos {
             Set<Long> collectionIds,
             @jakarta.validation.constraints.Size(max = 70) String metaTitle,
             @jakarta.validation.constraints.Size(max = 170) String metaDescription,
+            @jakarta.validation.constraints.Size(max = 20) List<@NotBlank @jakarta.validation.constraints.Size(max = 40) String> tags,
+            Long sizeChartId,
             /* Obrigatório na edição: versão lida pelo cliente (lock otimista). */
             Integer version) {
     }
@@ -79,13 +82,40 @@ public final class ProductAdminDtos {
                                 int weightGrams, boolean featured, boolean isNew, Set<Long> collectionIds,
                                 String metaTitle, String metaDescription, ProductStatus status, Instant publishedAt,
                                 Long minBasePrice, Long minEffectivePrice, boolean hasStock, int version,
-                                List<VariantResponse> variants) {
+                                List<String> tags, Long sizeChartId, List<VariantResponse> variants,
+                                List<ImageResponse> images, List<Long> relatedIds) {
 
-        public static ProductDetail of(Product p, List<VariantResponse> variants) {
+        public static ProductDetail of(Product p, List<VariantResponse> variants, List<ImageResponse> images, List<Long> relatedIds) {
             return new ProductDetail(p.id, p.name, p.slug, p.baseSku, p.description, p.material, p.careInstructions,
                     p.gender, p.mainCategoryId, p.basePrice, p.weightGrams, p.featured, p.isNew, p.collectionIds,
                     p.metaTitle, p.metaDescription, p.status, p.publishedAt, p.minBasePrice, p.minEffectivePrice,
-                    p.hasStock, p.version, variants);
+                    p.hasStock, p.version, List.of(p.tags), p.sizeChartId, variants, images, relatedIds);
         }
+    }
+
+    public record ImageResponse(Long id, String url, String alt, Long colorId, Integer width, Integer height,
+                                int position, boolean main) {
+
+        public static ImageResponse of(ProductImage i) {
+            return new ImageResponse(i.id, i.url, i.altText, i.colorId, i.width, i.height, i.position, i.isMain);
+        }
+    }
+
+    public record ImageUpdateRequest(@NotBlank @jakarta.validation.constraints.Size(max = 200) String alt, Long colorId, Boolean main) {
+    }
+
+    public record ImageOrderRequest(@NotEmpty List<Long> imageIds) {
+    }
+
+    public record RelatedRequest(@NotNull @jakarta.validation.constraints.Size(max = 12) List<Long> productIds) {
+    }
+
+    public record SizeChartRequest(
+            @NotBlank @jakarta.validation.constraints.Size(max = 80) String name,
+            @NotEmpty @jakarta.validation.constraints.Size(max = 10) List<@NotBlank String> columns,
+            @NotEmpty @jakarta.validation.constraints.Size(max = 20) List<@NotEmpty List<String>> rows) {
+    }
+
+    public record SizeChartResponse(Long id, String name, List<String> columns, List<List<String>> rows) {
     }
 }

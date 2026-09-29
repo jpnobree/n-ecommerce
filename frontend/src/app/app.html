@@ -22,6 +22,11 @@
     </ul>
   </nav>
 
+  <form class="search-form" action="/busca" method="get" role="search">
+    <label for="busca" class="visually-hidden">Buscar produtos</label>
+    <input id="busca" name="q" type="search" placeholder="Buscar" minlength="2" maxlength="100" required />
+  </form>
+
   <nav class="header-nav" aria-label="Conta">
     @if (auth.user(); as user) {
       @if (auth.hasAnyRole(['ADMIN', 'OPERATOR'])) {

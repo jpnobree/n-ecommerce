@@ -17,10 +17,12 @@ public class CategoryService {
 
     private final CategoryRepository categories;
     private final ProductRepository products;
+    private final ProductDenormalizer denormalizer;
 
-    CategoryService(CategoryRepository categories, ProductRepository products) {
+    CategoryService(CategoryRepository categories, ProductRepository products, ProductDenormalizer denormalizer) {
         this.categories = categories;
         this.products = products;
+        this.denormalizer = denormalizer;
     }
 
     @Transactional(readOnly = true)
@@ -91,6 +93,7 @@ public class CategoryService {
         if (!newPath.equals(oldPath) || depthDelta != 0) {
             categories.rewriteDescendants(oldPath, newPath, depthDelta);
         }
+        denormalizer.recomputeAllSearch(); // nome da categoria faz parte do documento de busca
         return get(id);
     }
 

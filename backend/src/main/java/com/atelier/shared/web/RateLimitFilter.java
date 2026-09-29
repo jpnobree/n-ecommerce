@@ -33,7 +33,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
             "/api/auth/forgot-password", new Rule(5, Duration.ofHours(1)),
             "/api/auth/reset-password", new Rule(10, Duration.ofHours(1)),
             "/api/auth/verify-email", new Rule(20, Duration.ofHours(1)),
-            "/api/auth/resend-verification", new Rule(3, Duration.ofHours(1)));
+            "/api/auth/resend-verification", new Rule(3, Duration.ofHours(1)),
+            "/api/newsletter", new Rule(10, Duration.ofHours(1)));
 
     private static final class Window {
         long startedAt;

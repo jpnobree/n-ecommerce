@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -20,6 +21,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -48,7 +50,16 @@ public abstract class IntegrationTest {
         PostgreSQLContainer postgres() {
             return new PostgreSQLContainer("postgres:16-alpine");
         }
+
+        @Bean
+        @Primary
+        InMemoryImageStorage imageStorage() {
+            return new InMemoryImageStorage();
+        }
     }
+
+    @Autowired
+    protected InMemoryImageStorage storage;
 
     @Value("${local.server.port}")
     int port;
@@ -135,6 +146,43 @@ public abstract class IntegrationTest {
     }
 
     protected Req get(String path) { return new Req("GET", path); }
+
+    /** Upload multipart (arquivo + campos de texto). */
+    protected Res multipart(String path, String token, byte[] file, String filename, Map<String, String> fields) {
+        String boundary = "----atelier" + UUID.randomUUID();
+        var body = new java.io.ByteArrayOutputStream();
+        try {
+            var utf8 = java.nio.charset.StandardCharsets.UTF_8;
+            for (var e : fields.entrySet()) {
+                body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + e.getKey() + "\"\r\n\r\n"
+                        + e.getValue() + "\r\n").getBytes(utf8));
+            }
+            body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + filename
+                    + "\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(utf8));
+            body.write(file);
+            body.write(("\r\n--" + boundary + "--\r\n").getBytes(utf8));
+            var req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .header("Authorization", "Bearer " + token)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build();
+            var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+            return new Res(res.statusCode(), res.body(), res, json);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** JPEG válido gerado em memória. */
+    protected static byte[] jpeg(int width, int height) {
+        var image = new java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var out = new java.io.ByteArrayOutputStream();
+        try {
+            javax.imageio.ImageIO.write(image, "jpeg", out);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+        return out.toByteArray();
+    }
     protected Req post(String path) { return new Req("POST", path); }
     protected Req put(String path) { return new Req("PUT", path); }
     protected Req delete(String path) { return new Req("DELETE", path); }

@@ -22,6 +22,10 @@ spring:
     port: ${MAIL_PORT:1025}
     username: ${MAIL_USERNAME:}
     password: ${MAIL_PASSWORD:}
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 server:
   shutdown: graceful
@@ -55,6 +59,15 @@ app:
     jwt-public-key: ${JWT_PUBLIC_KEY:}
     bootstrap-admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
     bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  # Imagens: S3, Cloudflare R2 ou MinIO (dev). Em produção, public-base-url aponta para a CDN.
+  storage:
+    endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
+    region: ${STORAGE_REGION:us-east-1}
+    bucket: ${STORAGE_BUCKET:atelier-media}
+    access-key: ${STORAGE_ACCESS_KEY:atelier}
+    secret-key: ${STORAGE_SECRET_KEY:atelier-dev-secret}
+    public-base-url: ${STORAGE_PUBLIC_BASE_URL:http://localhost:9000/atelier-media}
+    path-style: ${STORAGE_PATH_STYLE:true}
 
 sentry:
   dsn: ${SENTRY_DSN:}

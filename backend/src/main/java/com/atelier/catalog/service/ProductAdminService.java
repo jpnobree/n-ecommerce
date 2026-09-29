@@ -8,6 +8,8 @@ import com.atelier.shared.error.ErrorCode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,11 +30,18 @@ public class ProductAdminService {
     private final SizeRepository sizes;
     private final InventoryService inventory;
     private final ProductDenormalizer denormalizer;
+    private final ProductImageRepository images;
+    private final SizeChartRepository sizeCharts;
+    private final NamedParameterJdbcTemplate jdbc;
     private final Clock clock;
 
     ProductAdminService(ProductRepository products, ProductVariantRepository variants, CategoryRepository categories,
                         CollectionRepository collections, ColorRepository colors, SizeRepository sizes,
-                        InventoryService inventory, ProductDenormalizer denormalizer, Clock clock) {
+                        InventoryService inventory, ProductDenormalizer denormalizer, ProductImageRepository images,
+                        SizeChartRepository sizeCharts, NamedParameterJdbcTemplate jdbc, Clock clock) {
+        this.images = images;
+        this.sizeCharts = sizeCharts;
+        this.jdbc = jdbc;
         this.products = products;
         this.variants = variants;
         this.categories = categories;
@@ -56,9 +65,14 @@ public class ProductAdminService {
         List<ProductVariant> list = variants.findByProductIdOrderByColorIdAscSizeIdAsc(id);
         Map<Long, StockLevel> stock = inventory.levels(list.stream().map(v -> v.id).toList());
         Instant now = clock.instant();
+        List<Long> related = jdbc.queryForList(
+                "SELECT related_id FROM product_related WHERE product_id = :id ORDER BY position",
+                new MapSqlParameterSource("id", id), Long.class);
         return ProductDetail.of(p, list.stream()
-                .map(v -> VariantResponse.of(v, p.basePrice, stock.getOrDefault(v.id, new StockLevel(0, 0, 0)), now))
-                .toList());
+                        .map(v -> VariantResponse.of(v, p.basePrice, stock.getOrDefault(v.id, new StockLevel(0, 0, 0)), now))
+                        .toList(),
+                images.findByProductIdOrderByIsMainDescPositionAscIdAsc(id).stream().map(ImageResponse::of).toList(),
+                related);
     }
 
     @Transactional
@@ -74,6 +88,7 @@ public class ProductAdminService {
         }
         apply(p, req);
         products.saveAndFlush(p);
+        releaseOldSlug(p.slug);
         denormalizer.recompute(List.of(p.id));
         return p.id;
     }
@@ -87,6 +102,12 @@ public class ProductAdminService {
         }
         if (req.slug() != null && !req.slug().equals(p.slug)) {
             if (products.existsBySlug(req.slug())) throw new BusinessException(ErrorCode.SLUG_TAKEN);
+            // O endereço antigo continua funcionando (redirect 301 na loja) — não perde links nem SEO.
+            jdbc.update("""
+                    INSERT INTO product_slug_history (old_slug, product_id) VALUES (:old, :id)
+                    ON CONFLICT (old_slug) DO UPDATE SET product_id = EXCLUDED.product_id
+                    """, new MapSqlParameterSource("old", p.slug).addValue("id", p.id));
+            releaseOldSlug(req.slug());
             p.slug = req.slug();
         }
         apply(p, req);
@@ -94,12 +115,13 @@ public class ProductAdminService {
         denormalizer.recompute(List.of(p.id));
     }
 
-    /** Publica: exige categoria ativa e ao menos uma variante ativa. Imagens passam a ser exigidas na Fase 4. */
+    /** Publica: exige categoria ativa, ao menos uma variante ativa e ao menos uma imagem (RN-56). */
     @Transactional
     public void publish(Long id) {
         Product p = get(id);
         List<String> missing = new ArrayList<>();
         if (!variants.existsByProductIdAndActiveTrue(id)) missing.add("ao menos uma variante ativa");
+        if (!images.existsByProductId(id)) missing.add("ao menos uma imagem");
         if (categories.findById(p.mainCategoryId).map(c -> !c.active).orElse(true)) missing.add("categoria ativa");
         if (!missing.isEmpty()) {
             throw new BusinessException(ErrorCode.PRODUCT_NOT_PUBLISHABLE, "Falta: " + String.join(", ", missing));
@@ -172,6 +194,24 @@ public class ProductAdminService {
         denormalizer.recompute(List.of(productId));
     }
 
+    /** "Complete o look": até 12 produtos, na ordem informada. */
+    @Transactional
+    public void setRelated(Long productId, List<Long> relatedIds) {
+        get(productId);
+        List<Long> ids = relatedIds.stream().distinct().filter(r -> !r.equals(productId)).toList();
+        if (products.findAllById(ids).size() != ids.size()) throw new BusinessException(ErrorCode.NOT_FOUND, "Produto relacionado inexistente");
+        jdbc.update("DELETE FROM product_related WHERE product_id = :id", new MapSqlParameterSource("id", productId));
+        for (int i = 0; i < ids.size(); i++) {
+            jdbc.update("INSERT INTO product_related (product_id, related_id, position) VALUES (:id, :rel, :pos)",
+                    new MapSqlParameterSource("id", productId).addValue("rel", ids.get(i)).addValue("pos", i));
+        }
+    }
+
+    /** Um slug em uso por um produto deixa de ser redirect de outro (o produto vivo tem prioridade). */
+    private void releaseOldSlug(String slug) {
+        jdbc.update("DELETE FROM product_slug_history WHERE old_slug = :slug", new MapSqlParameterSource("slug", slug));
+    }
+
     private Product get(Long id) {
         return products.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     }
@@ -194,6 +234,12 @@ public class ProductAdminService {
         p.isNew = Boolean.TRUE.equals(req.isNew());
         p.collectionIds.clear();
         p.collectionIds.addAll(collectionIds);
+        if (req.sizeChartId() != null && !sizeCharts.existsById(req.sizeChartId())) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "Tabela de medidas inexistente");
+        }
+        p.sizeChartId = req.sizeChartId();
+        p.tags = req.tags() == null ? new String[0]
+                : req.tags().stream().map(t -> t.trim().toLowerCase(Locale.ROOT)).distinct().toArray(String[]::new);
         p.metaTitle = req.metaTitle();
         p.metaDescription = req.metaDescription();
     }

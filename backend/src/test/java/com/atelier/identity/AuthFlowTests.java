@@ -20,6 +20,9 @@ class AuthFlowTests extends IntegrationTest {
         assertThat(res.json().path("user").path("emailVerified").asBoolean()).isFalse();
         assertThat(res.body()).doesNotContain(res.refreshCookie()); // refresh só no cookie
         assertThat(res.setCookieHeader()).contains("HttpOnly", "SameSite=Strict", "Path=/api/auth", "Secure");
+        // Indicador sem segredo para o frontend saber que vale tentar o refresh.
+        assertThat(res.raw().headers().allValues("Set-Cookie"))
+                .anySatisfy(c -> assertThat(c).startsWith("has_session=1").contains("Path=/").doesNotContain("HttpOnly"));
 
         var me = get("/api/me").bearer(res.text("accessToken")).send();
         assertThat(me.status()).isEqualTo(200);

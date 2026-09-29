@@ -9,11 +9,12 @@ public final class ListingDtos {
 
     private ListingDtos() {}
 
-    public enum Sort { newest, best_sellers, price_asc, price_desc }
+    /** relevance só faz sentido com busca textual; sem ela, equivale a newest. */
+    public enum Sort { relevance, newest, best_sellers, price_asc, price_desc }
 
     public record ListingFilter(String category, List<String> collections, List<String> sizes, List<String> colors,
                                 Long minPrice, Long maxPrice, boolean inStock, boolean onSale, List<Gender> genders,
-                                Sort sort, int page, int pageSize) {
+                                Sort sort, int page, int pageSize, String query) {
     }
 
     public record ColorChip(String slug, String name, String hex) {

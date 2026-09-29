@@ -7,6 +7,14 @@ import com.atelier.catalog.domain.Size;
 import com.atelier.catalog.repository.CollectionRepository;
 import com.atelier.catalog.repository.ColorRepository;
 import com.atelier.catalog.repository.SizeRepository;
+import com.atelier.catalog.repository.SizeChartRepository;
+import com.atelier.catalog.domain.SizeChart;
+import com.atelier.catalog.api.dto.ProductAdminDtos.SizeChartRequest;
+import com.atelier.catalog.api.dto.ProductAdminDtos.SizeChartResponse;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.util.List;
+import java.util.Map;
 import com.atelier.shared.error.BusinessException;
 import com.atelier.shared.error.ErrorCode;
 import org.springframework.stereotype.Service;
@@ -22,11 +30,18 @@ public class AttributeService {
     private final CollectionRepository collections;
     private final ColorRepository colors;
     private final SizeRepository sizes;
+    private final ProductDenormalizer denormalizer;
+    private final SizeChartRepository sizeCharts;
+    private final JsonMapper json;
 
-    AttributeService(CollectionRepository collections, ColorRepository colors, SizeRepository sizes) {
+    AttributeService(CollectionRepository collections, ColorRepository colors, SizeRepository sizes,
+                     ProductDenormalizer denormalizer, SizeChartRepository sizeCharts, JsonMapper json) {
+        this.sizeCharts = sizeCharts;
+        this.json = json;
         this.collections = collections;
         this.colors = colors;
         this.sizes = sizes;
+        this.denormalizer = denormalizer;
     }
 
     // ---- coleções ----
@@ -48,6 +63,8 @@ public class AttributeService {
             c.slug = req.slug();
         }
         apply(c, req);
+        collections.flush();
+        denormalizer.recomputeAllSearch();
         return c;
     }
 
@@ -75,7 +92,9 @@ public class AttributeService {
         c.name = req.name().trim();
         c.slug = req.slug() != null ? req.slug() : Slugs.of(req.name());
         c.hex = req.hex() == null ? null : req.hex().toUpperCase();
-        return colors.saveAndFlush(c);
+        Color saved = colors.saveAndFlush(c);
+        if (id != null) denormalizer.recomputeAllSearch();
+        return saved;
     }
 
     @Transactional
@@ -100,5 +119,32 @@ public class AttributeService {
     public void deleteSize(Long id) {
         sizes.deleteById(id);
         sizes.flush();
+    }
+
+    // ---- tabelas de medidas ----
+
+    record SizeChartContent(List<String> columns, List<List<String>> rows) {}
+
+    @Transactional
+    public SizeChart saveSizeChart(Long id, SizeChartRequest req) {
+        if (req.rows().stream().anyMatch(r -> r.size() != req.columns().size())) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Cada linha deve ter " + req.columns().size() + " colunas");
+        }
+        SizeChart chart = id == null ? new SizeChart()
+                : sizeCharts.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+        chart.name = req.name().trim();
+        chart.content = json.writeValueAsString(Map.of("columns", req.columns(), "rows", req.rows()));
+        return sizeCharts.saveAndFlush(chart);
+    }
+
+    @Transactional
+    public void deleteSizeChart(Long id) {
+        sizeCharts.deleteById(id);
+        sizeCharts.flush();
+    }
+
+    public SizeChartResponse toResponse(SizeChart chart) {
+        SizeChartContent c = json.readValue(chart.content, SizeChartContent.class);
+        return new SizeChartResponse(chart.id, chart.name, c.columns(), c.rows());
     }
 }

@@ -6,6 +6,9 @@ import com.atelier.catalog.api.dto.CategoryDtos.CategoryResponse;
 import com.atelier.catalog.repository.CollectionRepository;
 import com.atelier.catalog.repository.ColorRepository;
 import com.atelier.catalog.repository.SizeRepository;
+import com.atelier.catalog.repository.SizeChartRepository;
+import com.atelier.catalog.api.dto.ProductAdminDtos.SizeChartRequest;
+import com.atelier.catalog.api.dto.ProductAdminDtos.SizeChartResponse;
 import com.atelier.catalog.service.AttributeService;
 import com.atelier.catalog.service.CategoryService;
 import jakarta.validation.Valid;
@@ -28,9 +31,11 @@ public class AdminCatalogController {
     private final CollectionRepository collections;
     private final ColorRepository colors;
     private final SizeRepository sizes;
+    private final SizeChartRepository sizeCharts;
 
     AdminCatalogController(CategoryService categories, AttributeService attributes, CollectionRepository collections,
-                           ColorRepository colors, SizeRepository sizes) {
+                           ColorRepository colors, SizeRepository sizes, SizeChartRepository sizeCharts) {
+        this.sizeCharts = sizeCharts;
         this.categories = categories;
         this.attributes = attributes;
         this.collections = collections;
@@ -144,5 +149,32 @@ public class AdminCatalogController {
     @PreAuthorize("hasRole('ADMIN')")
     void deleteSize(@PathVariable Long id) {
         attributes.deleteSize(id);
+    }
+
+    // ---- tabelas de medidas ----
+
+    @GetMapping("/size-charts")
+    List<SizeChartResponse> sizeCharts() {
+        return sizeCharts.findAllByOrderByNameAsc().stream().map(attributes::toResponse).toList();
+    }
+
+    @PostMapping("/size-charts")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasRole('ADMIN')")
+    SizeChartResponse createSizeChart(@Valid @RequestBody SizeChartRequest req) {
+        return attributes.toResponse(attributes.saveSizeChart(null, req));
+    }
+
+    @PutMapping("/size-charts/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    SizeChartResponse updateSizeChart(@PathVariable Long id, @Valid @RequestBody SizeChartRequest req) {
+        return attributes.toResponse(attributes.saveSizeChart(id, req));
+    }
+
+    @DeleteMapping("/size-charts/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasRole('ADMIN')")
+    void deleteSizeChart(@PathVariable Long id) {
+        attributes.deleteSizeChart(id);
     }
 }

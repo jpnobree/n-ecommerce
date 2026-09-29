@@ -81,7 +81,13 @@ actuator na 8081, IP do cliente lido de `X-Forwarded-For` (o load balancer deve 
 | `APP_VERSION` | API | versão exibida em `/api/status` (usar o SHA do commit) |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | API | Sentry; vazio = desligado |
 | `LOG_FORMAT` | API | `logstash` para logs JSON também em dev |
+| `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET` | API | object storage S3/R2 das imagens (dev: S3 falso `adobe/s3mock` em `localhost:9000`) |
+| `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY` | API | credenciais do storage (vazias = credenciais padrão da AWS) |
+| `STORAGE_PUBLIC_BASE_URL` | API | URL pública das imagens (em produção, a CDN) |
 | `NG_ALLOWED_HOSTS` | SSR | hosts aceitos pelo servidor SSR (ex.: `www.loja.com.br`) |
+| `API_URL` | SSR | API vista pelo servidor Node (sitemap). Padrão `http://localhost:8080` |
+| `SITE_URL` | SSR | domínio público usado no sitemap e no robots (padrão: host da requisição) |
+| `SITE_INDEXING` | SSR | `false` em homologação: robots.txt bloqueia tudo |
 | `PORT` | SSR | porta do servidor Node (padrão 4000) |
 
 Gerar o par de chaves JWT:

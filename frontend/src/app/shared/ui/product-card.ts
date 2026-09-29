@@ -1,17 +1,19 @@
-import { Component, input } from '@angular/core';
+import { Component, booleanAttribute, input } from '@angular/core';
+import { NgOptimizedImage } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ProductCard as Card } from '../../core/catalog/catalog.models';
 import { MoneyPipe } from '../money.pipe';
 
 @Component({
   selector: 'app-product-card',
-  imports: [RouterLink, MoneyPipe],
+  imports: [RouterLink, MoneyPipe, NgOptimizedImage],
   template: `
     @let p = product();
     <a class="product-card" [routerLink]="['/p', p.slug]">
       <div class="product-media" [class.sold-out]="!p.inStock">
         @if (p.imageUrl) {
-          <img [src]="p.imageUrl" [alt]="p.name" loading="lazy" />
+          <img [ngSrc]="p.imageUrl" [alt]="p.name" fill [priority]="priority()"
+               sizes="(min-width: 1440px) 25vw, (min-width: 768px) 33vw, 50vw" />
         }
         <div class="product-badges">
           @if (!p.inStock) {
@@ -23,7 +25,7 @@ import { MoneyPipe } from '../money.pipe';
           }
         </div>
       </div>
-      <h3 class="product-name">{{ p.name }}</h3>
+      <p class="product-name">{{ p.name }}</p>
       <p class="product-price">
         @if (p.salePrice) {
           <s aria-label="Preço original">{{ p.price | money }}</s>
@@ -44,4 +46,6 @@ import { MoneyPipe } from '../money.pipe';
 })
 export class ProductCard {
   readonly product = input.required<Card>();
+  /** Primeiras imagens visíveis: carregam já (LCP), sem lazy loading. */
+  readonly priority = input(false, { transform: booleanAttribute });
 }

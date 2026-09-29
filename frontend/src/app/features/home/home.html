@@ -1,0 +1,104 @@
+@if (home(); as h) {
+  @if (h.strip; as strip) {
+    <p class="strip">
+      @if (strip.linkUrl) {
+        <a [routerLink]="strip.linkUrl">{{ strip.title }}</a>
+      } @else {
+        {{ strip.title }}
+      }
+    </p>
+  }
+
+  @if (h.hero[0]; as hero) {
+    <section class="hero-banner">
+      <picture>
+        @if (hero.imageMobileUrl) {
+          <source media="(max-width: 767px)" [srcset]="hero.imageMobileUrl" />
+        }
+        <img [ngSrc]="hero.imageDesktopUrl!" alt="" fill priority sizes="100vw" />
+      </picture>
+      <div class="hero-text">
+        <h1>{{ hero.title }}</h1>
+        @if (hero.subtitle) {
+          <p>{{ hero.subtitle }}</p>
+        }
+        @if (hero.linkUrl) {
+          <a class="btn" [routerLink]="hero.linkUrl">{{ hero.ctaLabel || 'Ver mais' }}</a>
+        }
+      </div>
+    </section>
+  } @else {
+    <h1 class="visually-hidden">Atelier</h1>
+  }
+
+  @if (h.categories.length) {
+    <nav class="category-tiles" aria-label="Categorias">
+      @for (c of h.categories; track c.id) {
+        <a [routerLink]="['/c', c.path]">{{ c.name }}</a>
+      }
+    </nav>
+  }
+
+  @if (h.featured.length) {
+    <section class="shelf">
+      <h2>Destaques</h2>
+      <ul class="shelf-list">
+        @for (p of h.featured; track p.id) {
+          <li><app-product-card [product]="p" /></li>
+        }
+      </ul>
+    </section>
+  }
+
+  @if (h.campaigns.length) {
+    <section class="campaigns">
+      @for (c of h.campaigns; track c.id) {
+        <a class="campaign" [routerLink]="c.linkUrl ?? '/'">
+          @if (c.imageDesktopUrl) {
+            <img [ngSrc]="c.imageDesktopUrl" alt="" fill sizes="(min-width: 768px) 50vw, 100vw" />
+          }
+          <span class="campaign-text">
+            <strong>{{ c.title }}</strong>
+            @if (c.subtitle) {
+              <span>{{ c.subtitle }}</span>
+            }
+          </span>
+        </a>
+      }
+    </section>
+  }
+
+  @for (shelf of [{ title: 'Novidades', link: '/novidades', items: h.newArrivals }, { title: 'Mais vendidos', link: null, items: h.bestSellers }]; track shelf.title) {
+    @if (shelf.items.length) {
+      <section class="shelf">
+        <h2>
+          {{ shelf.title }}
+          @if (shelf.link) {
+            <a class="shelf-more" [routerLink]="shelf.link">Ver tudo</a>
+          }
+        </h2>
+        <ul class="shelf-list">
+          @for (p of shelf.items; track p.id) {
+            <li><app-product-card [product]="p" /></li>
+          }
+        </ul>
+      </section>
+    }
+  }
+
+  @if (h.collections.length) {
+    <section class="shelf">
+      <h2>Coleções</h2>
+      <ul class="subcategories">
+        @for (c of h.collections; track c.id) {
+          <li><a [routerLink]="['/colecao', c.slug]">{{ c.name }}</a></li>
+        }
+      </ul>
+    </section>
+  }
+} @else {
+  <section class="hero">
+    <h1>Atelier</h1>
+    <p>Moda feminina, masculina e acessórios.</p>
+  </section>
+}

@@ -1,0 +1,180 @@
+@switch (state()?.status) {
+  @case ('not-found') {
+    <section class="not-found">
+      <h1>Produto não encontrado</h1>
+      <p>Ele pode ter saído de linha. Veja as novidades.</p>
+      <a routerLink="/novidades" class="btn">Ver novidades</a>
+    </section>
+  }
+  @case ('error') {
+    <p class="form-error" role="alert">Não foi possível carregar o produto. Tente novamente.</p>
+  }
+}
+
+@if (product(); as p) {
+  <nav class="breadcrumb" aria-label="Você está em">
+    <a routerLink="/">Início</a>
+    @for (c of p.breadcrumb; track c.path) {
+      <span aria-hidden="true">/</span>
+      <a [routerLink]="['/c', c.path]">{{ c.name }}</a>
+    }
+  </nav>
+
+  <article class="product-page">
+    <div class="gallery">
+      @let images = gallery();
+      @if (images.length) {
+        <div class="gallery-main">
+          @for (img of images; track img.url; let i = $index) {
+            @if (i === activeImage()) {
+              <img [ngSrc]="img.url" [alt]="img.alt" [width]="img.width ?? 1200" [height]="img.height ?? 1600"
+                   [priority]="i === 0" sizes="(min-width: 1024px) 55vw, 100vw" />
+            }
+          }
+        </div>
+        @if (images.length > 1) {
+          <ul class="gallery-thumbs" aria-label="Fotos do produto">
+            @for (img of images; track img.url; let i = $index) {
+              <li>
+                <button type="button" [class.active]="i === activeImage()" (click)="activeImage.set(i)"
+                        [attr.aria-label]="'Ver foto ' + (i + 1)" [attr.aria-current]="i === activeImage()">
+                  <img [ngSrc]="img.url" alt="" width="120" height="160" />
+                </button>
+              </li>
+            }
+          </ul>
+        }
+      } @else {
+        <div class="gallery-main product-media"></div>
+      }
+    </div>
+
+    <div class="product-info">
+      @if (p.badges.length) {
+        <p class="product-badges-inline">
+          @for (b of p.badges; track b) {
+            <span class="tag">{{ b === 'NEW' ? 'Novo' : 'Promoção' }}</span>
+          }
+        </p>
+      }
+      <h1>{{ p.name }}</h1>
+
+      @if (price(); as pr) {
+        <p class="product-price large">
+          @if (pr.from) {
+            <span class="muted">a partir de</span>
+          }
+          @if (pr.effective < pr.full) {
+            <s aria-label="Preço original">{{ pr.full | money }}</s>
+            <strong>{{ pr.effective | money }}</strong>
+          } @else {
+            <strong>{{ pr.effective | money }}</strong>
+          }
+        </p>
+      }
+
+      @if (p.colors.length) {
+        <fieldset class="option-group">
+          <legend>Cor: <strong>{{ selectedColor()?.name }}</strong></legend>
+          <div class="color-options">
+            @for (c of p.colors; track c.id) {
+              <button type="button" class="color-option" [class.selected]="c.id === selectedColor()?.id"
+                      (click)="selectColor(c.slug)" [attr.aria-pressed]="c.id === selectedColor()?.id" [attr.aria-label]="c.name">
+                <span class="swatch" [style.background]="c.hex"></span>
+              </button>
+            }
+          </div>
+        </fieldset>
+      }
+
+      @if (p.sizes.length) {
+        <fieldset class="option-group">
+          <legend>
+            Tamanho
+            @if (p.sizeChart) {
+              <button type="button" class="link" (click)="openSizeChart(chart)">Tabela de medidas</button>
+            }
+          </legend>
+          <div class="size-options">
+            @for (s of p.sizes; track s.id) {
+              @let status = sizeStatus(s.id);
+              <button type="button" class="size-option" [class.checked]="s.id === selectedSizeId()"
+                      [class.unavailable]="status === 'OUT'" [disabled]="status === 'OUT'"
+                      (click)="selectSize(s.id)" [attr.aria-pressed]="s.id === selectedSizeId()"
+                      [attr.aria-label]="s.name + (status === 'OUT' ? ' (esgotado)' : '')">
+                {{ s.name }}
+              </button>
+            }
+          </div>
+          @if (selectedStatus() === 'LOW') {
+            <p class="stock-note" role="status">Últimas unidades</p>
+          }
+        </fieldset>
+      }
+
+      <button type="button" class="btn add-to-bag" disabled aria-describedby="bag-note">Adicionar à sacola</button>
+      <p id="bag-note" class="muted small">
+        @if (!selectedSizeId()) {
+          Escolha um tamanho.
+        }
+        A sacola chega na próxima etapa do projeto.
+      </p>
+
+      <p class="muted small">Ref. {{ selectedVariant()?.sku ?? p.sku }}</p>
+
+      <div class="product-details">
+        @if (p.description) {
+          <details open>
+            <summary>Descrição</summary>
+            <p>{{ p.description }}</p>
+          </details>
+        }
+        @if (p.material) {
+          <details>
+            <summary>Composição</summary>
+            <p>{{ p.material }}</p>
+          </details>
+        }
+        @if (p.careInstructions) {
+          <details>
+            <summary>Cuidados</summary>
+            <p>{{ p.careInstructions }}</p>
+          </details>
+        }
+      </div>
+    </div>
+  </article>
+
+  <dialog #chart class="size-chart" aria-labelledby="size-chart-title">
+    @if (p.sizeChart; as sc) {
+      <h2 id="size-chart-title">{{ sc.name }}</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              @for (col of sc.columns; track $index) {
+                <th scope="col">{{ col }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of sc.rows; track $index) {
+              <tr>
+                @for (cell of row; track $index) {
+                  <td>{{ cell }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <form method="dialog"><button class="btn-outline">Fechar</button></form>
+    }
+  </dialog>
+
+  @defer (on viewport) {
+    <app-related-products [slug]="p.slug" />
+  } @placeholder {
+    <div class="related-placeholder"></div>
+  }
+}

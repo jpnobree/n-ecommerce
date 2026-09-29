@@ -39,6 +39,32 @@ public class ProductDenormalizer {
              WHERE p.id = agg.id
             """;
 
+    /**
+     * Documento de busca (PRD 5.1): nome (A), tags + categorias com ancestrais (B), coleções, material e cores (C),
+     * descrição (D). Sem acento e com stemming em português ("camisetas" encontra "Camiseta").
+     * Mesmo SQL da migration V4 (carga inicial).
+     */
+    private static final String SEARCH = """
+            UPDATE product p
+               SET search_name = lower(unaccent(p.name)),
+                   search_vector =
+                       setweight(to_tsvector('portuguese', unaccent(p.name)), 'A')
+                    || setweight(to_tsvector('portuguese', unaccent(array_to_string(p.tags, ' ') || ' ' || coalesce(src.categories, ''))), 'B')
+                    || setweight(to_tsvector('portuguese', unaccent(coalesce(src.collections, '') || ' ' || coalesce(p.material, '') || ' ' || coalesce(src.colors, ''))), 'C')
+                    || setweight(to_tsvector('portuguese', unaccent(coalesce(p.description, ''))), 'D')
+              FROM (SELECT p2.id,
+                           (SELECT string_agg(a.name, ' ') FROM category c
+                              JOIN category a ON c.slug_path = a.slug_path OR c.slug_path LIKE a.slug_path || '/%%'
+                             WHERE c.id = p2.main_category_id) AS categories,
+                           (SELECT string_agg(co.name, ' ') FROM product_collection pc
+                              JOIN collection co ON co.id = pc.collection_id WHERE pc.product_id = p2.id) AS collections,
+                           (SELECT string_agg(DISTINCT cl.name, ' ') FROM product_variant v
+                              JOIN color cl ON cl.id = v.color_id WHERE v.product_id = p2.id AND v.active) AS colors
+                      FROM product p2
+                     WHERE %s) src
+             WHERE p.id = src.id
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
 
     ProductDenormalizer(NamedParameterJdbcTemplate jdbc) {
@@ -47,7 +73,17 @@ public class ProductDenormalizer {
 
     public void recompute(Collection<Long> productIds) {
         if (productIds.isEmpty()) return;
-        jdbc.update(RECOMPUTE.formatted("p2.id IN (:ids)"), new MapSqlParameterSource("ids", productIds));
+        var params = new MapSqlParameterSource("ids", productIds);
+        jdbc.update(RECOMPUTE.formatted("p2.id IN (:ids)"), params);
+        jdbc.update(SEARCH.formatted("p2.id IN (:ids)"), params);
+    }
+
+    /**
+     * Renomear categoria, coleção ou cor muda o documento de busca de muitos produtos.
+     * ponytail: reindexa tudo (alguns segundos com 50 mil produtos); filtrar pelos afetados se ficar lento.
+     */
+    public void recomputeAllSearch() {
+        jdbc.update(SEARCH.formatted("true"), new MapSqlParameterSource());
     }
 
     /**

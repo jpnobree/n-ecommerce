@@ -40,7 +40,9 @@ public class SecurityConfig {
                                 "/api/auth/logout", "/api/auth/verify-email", "/api/auth/forgot-password",
                                 "/api/auth/reset-password").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories", "/api/categories/**", "/api/collections",
-                                "/api/collections/**", "/api/products", "/api/products/**").permitAll()
+                                "/api/collections/**", "/api/products", "/api/products/**", "/api/search/**", "/api/home",
+                                "/api/seo/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/newsletter").permitAll()
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "OPERATOR")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))

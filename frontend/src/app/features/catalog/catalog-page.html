@@ -143,16 +143,27 @@
           <p class="form-error" role="alert">Não foi possível carregar os produtos. Tente novamente.</p>
         } @else if (!loading() && items().length === 0) {
           <div class="empty-state">
-            <p>Nenhum produto com esses filtros.</p>
+            <p>{{ mode === 'search' ? 'Nenhum produto encontrado.' : 'Nenhum produto com esses filtros.' }}</p>
             @if (activeChips().length) {
               <button type="button" class="btn-outline" (click)="clearAll()">Limpar filtros</button>
             }
           </div>
+          @if (suggestions().length) {
+            <h2 class="shelf-title">Talvez você goste</h2>
+            <ul class="product-grid">
+              @for (p of suggestions(); track p.id) {
+                <li><app-product-card [product]="p" /></li>
+              }
+            </ul>
+          }
+        }
+        @if (correctedQuery(); as c) {
+          <p class="muted" role="status">Mostrando resultados para <strong>{{ c }}</strong>.</p>
         }
 
         <ul class="product-grid" [class.dimmed]="loading()">
-          @for (p of items(); track p.id) {
-            <li><app-product-card [product]="p" /></li>
+          @for (p of items(); track p.id; let i = $index) {
+            <li><app-product-card [product]="p" [priority]="i < 4" /></li>
           }
         </ul>
 

@@ -1,9 +1,8 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Component, DestroyRef, RESPONSE_INIT, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, ParamMap, Router, RouterLink, UrlSegment } from '@angular/router';
-import { catchError, combineLatest, distinctUntilChanged, forkJoin, map, of, switchMap } from 'rxjs';
+import { Observable, catchError, combineLatest, distinctUntilChanged, forkJoin, map, of, switchMap, tap } from 'rxjs';
 import {
   CategoryPage,
   Collection,
@@ -12,12 +11,13 @@ import {
   Facets,
   ListingResponse,
   ProductCard as Card,
-  SortOption,
+  SearchResponse,
 } from '../../core/catalog/catalog.models';
+import { SeoService, breadcrumbLd } from '../../core/seo/seo.service';
 import { MoneyPipe } from '../../shared/money.pipe';
 import { ProductCard } from '../../shared/ui/product-card';
 
-type Mode = 'category' | 'collection' | 'new' | 'sale';
+type Mode = 'category' | 'collection' | 'new' | 'sale' | 'search';
 type ListParam = 'sizes' | 'colors' | 'collection' | 'gender';
 
 const PAGE_SIZE = 24;
@@ -25,7 +25,7 @@ const PAGE_SIZE = 24;
 const MAX_PAGES_FROM_URL = 10;
 const FILTER_PARAMS = ['sizes', 'colors', 'collection', 'gender', 'minPrice', 'maxPrice', 'inStock', 'onSale'];
 
-const SORT_LABELS: Record<SortOption, string> = {
+const SORT_LABELS: Record<string, string> = {
   newest: 'Mais recentes',
   best_sellers: 'Mais vendidos',
   price_asc: 'Menor preço',
@@ -33,8 +33,8 @@ const SORT_LABELS: Record<SortOption, string> = {
 };
 
 /**
- * Listagem do catálogo. A URL é a fonte da verdade dos filtros (compartilhável, botão voltar funciona);
- * mudar filtro/ordenação refaz a busca, mudar só ?page= não (quem carrega mais páginas é loadMore).
+ * Listagem do catálogo e resultados de busca. A URL é a fonte da verdade dos filtros (compartilhável,
+ * botão voltar funciona); mudar filtro/ordenação refaz a busca, mudar só ?page= não (loadMore cuida disso).
  */
 @Component({
   selector: 'app-catalog-page',
@@ -45,18 +45,24 @@ export class CatalogPage {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
-  private readonly title = inject(Title);
-  private readonly meta = inject(Meta);
+  private readonly seo = inject(SeoService);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
   protected readonly mode = this.route.snapshot.data['mode'] as Mode;
-  protected readonly sortLabels = SORT_LABELS;
-  protected readonly sortOptions = Object.keys(SORT_LABELS) as SortOption[];
+  private readonly defaultSort = this.mode === 'search' ? 'relevance' : 'newest';
+  protected readonly sortLabels: Record<string, string> =
+    this.mode === 'search' ? { relevance: 'Relevância', ...SORT_LABELS } : SORT_LABELS;
+  protected readonly sortOptions = Object.keys(this.sortLabels);
 
   protected readonly heading = signal('');
   protected readonly breadcrumb = signal<Crumb[]>([]);
   protected readonly subcategories = signal<Crumb[]>([]);
   protected readonly notFound = signal(false);
+  private description: string | null = null;
+
+  /** Busca: termo corrigido ("mostrando resultados para...") e sugestões quando nada foi encontrado. */
+  protected readonly correctedQuery = signal<string | null>(null);
+  protected readonly suggestions = signal<Card[]>([]);
 
   protected readonly items = signal<Card[]>([]);
   protected readonly facets = signal<Facets | null>(null);
@@ -66,9 +72,9 @@ export class CatalogPage {
   protected readonly failed = signal(false);
   protected readonly filtersOpen = signal(false);
 
-  private readonly query = toSignal(this.route.queryParamMap, { requireSync: true });
+  protected readonly query = toSignal(this.route.queryParamMap, { requireSync: true });
 
-  protected readonly sort = computed(() => (this.query().get('sort') as SortOption) || 'newest');
+  protected readonly sort = computed(() => this.query().get('sort') || this.defaultSort);
   protected readonly hasMore = computed(() => this.items().length < this.total());
   protected readonly activeChips = computed(() => this.chips(this.query(), this.facets()));
 
@@ -103,9 +109,8 @@ export class CatalogPage {
       )
       .subscribe((pages) => {
         this.loading.set(false);
-        // Combinações de filtro/ordenação não são indexadas (PRD 21.3); a página base é.
-        const filtered = [...FILTER_PARAMS, 'sort', 'page'].some((p) => this.route.snapshot.queryParamMap.has(p));
-        this.meta.updateTag({ name: 'robots', content: filtered ? 'noindex, follow' : 'index, follow' });
+        if (this.mode === 'search') this.heading.set(`Resultados para "${this.query().get('q') ?? ''}"`);
+        this.applySeo();
         if (!pages.length) return;
         this.items.set(pages.flatMap((p) => p.content));
         this.facets.set(pages[0].facets);
@@ -134,7 +139,7 @@ export class CatalogPage {
   }
 
   protected setSort(value: string): void {
-    this.update({ sort: value === 'newest' ? null : value });
+    this.update({ sort: value === this.defaultSort ? null : value });
   }
 
   /** Recebe reais digitados; a URL e a API usam centavos. */
@@ -192,32 +197,48 @@ export class CatalogPage {
   }
 
   private filterKey(qp: ParamMap): string {
-    return [...FILTER_PARAMS, 'sort'].map((p) => `${p}=${qp.get(p) ?? ''}`).join('&');
+    return [...FILTER_PARAMS, 'sort', 'q'].map((p) => `${p}=${qp.get(p) ?? ''}`).join('&');
   }
 
-  private fetch(ctx: { mode: Mode; value: string }, qp: ParamMap, page: number) {
+  private fetch(ctx: { mode: Mode; value: string }, qp: ParamMap, page: number): Observable<ListingResponse> {
     let params = new HttpParams().set('page', page).set('pageSize', PAGE_SIZE);
     for (const p of [...FILTER_PARAMS, 'sort']) {
       const v = qp.get(p);
       if (v) params = params.set(p, v);
     }
+    if (ctx.mode === 'search') return this.search(qp.get('q') ?? '', params, page);
     if (ctx.mode === 'category') params = params.set('category', ctx.value);
     if (ctx.mode === 'collection') params = params.set('collection', ctx.value);
     if (ctx.mode === 'sale') params = params.set('onSale', 'true');
     return this.http.get<ListingResponse>('/api/products', { params });
   }
 
-  private loadHeader(ctx: { mode: Mode; value: string }) {
+  /** SKU exato vai direto ao produto; sem resultado, a API corrige o termo ou sugere mais vendidos. */
+  private search(q: string, params: HttpParams, page: number): Observable<ListingResponse> {
+    if (q.trim().length < 2) return of(EMPTY);
+    return this.http.get<SearchResponse>('/api/search/products', { params: params.set('q', q) }).pipe(
+      tap((res) => {
+        if (page !== 0) return;
+        if (res.exactMatch) void this.router.navigate(['/p', res.exactMatch], { replaceUrl: true });
+        this.correctedQuery.set(res.correctedQuery);
+        this.suggestions.set(res.suggestions);
+      }),
+      map((res) => res.result),
+    );
+  }
+
+  private loadHeader(ctx: { mode: Mode; value: string }): Observable<unknown> {
     this.notFound.set(false);
     const done = (heading: string, description: string | null = null) => {
       this.heading.set(heading);
-      this.title.setTitle(`${heading} | Atelier`);
-      if (description) this.meta.updateTag({ name: 'description', content: description });
+      this.description = description;
+      this.applySeo();
     };
     const missing = (err: unknown) => {
       if (err instanceof HttpErrorResponse && err.status === 404) {
         this.notFound.set(true);
         if (this.response) this.response.status = 404;
+        this.seo.set({ title: 'Página não encontrada', noindex: true });
       }
       return of(null);
     };
@@ -238,12 +259,37 @@ export class CatalogPage {
           catchError(missing),
         );
       case 'new':
-        done('Novidades');
+        done('Novidades', 'As peças que acabaram de chegar.');
         return of(null);
       case 'sale':
-        done('Promoções');
+        done('Promoções', 'Peças selecionadas com preço especial.');
+        return of(null);
+      case 'search':
         return of(null);
     }
+  }
+
+  /**
+   * Canonical = a página base, sem filtros; combinações de filtro/ordenação/página e a busca interna
+   * não são indexadas (PRD 21.3).
+   */
+  private applySeo(): void {
+    if (this.notFound() || !this.heading()) return;
+    const qp = this.route.snapshot.queryParamMap;
+    const filtered = [...FILTER_PARAMS, 'sort', 'page'].some((p) => qp.has(p));
+    const path = '/' + this.route.snapshot.url.map((s) => s.path).join('/');
+    const crumbs = [
+      { name: 'Início', path: '/' },
+      ...this.breadcrumb().map((c) => ({ name: c.name, path: `/c/${c.path}` })),
+      { name: this.heading(), path },
+    ];
+    this.seo.set({
+      title: this.heading(),
+      description: this.description ?? `${this.heading()}: peças selecionadas na Atelier, com troca fácil e entrega para todo o Brasil.`,
+      path,
+      noindex: filtered || this.mode === 'search',
+      jsonLd: this.mode === 'category' ? [breadcrumbLd(this.seo, crumbs)] : [],
+    });
   }
 
   private chips(qp: ParamMap, facets: Facets | null) {
@@ -263,3 +309,12 @@ export class CatalogPage {
     return (qp.get(name) ?? '').split(',').filter(Boolean);
   }
 }
+
+const EMPTY: ListingResponse = {
+  content: [],
+  page: 0,
+  pageSize: PAGE_SIZE,
+  totalElements: 0,
+  totalPages: 0,
+  facets: { sizes: [], colors: [], genders: [], collections: [], price: { min: null, max: null } },
+};

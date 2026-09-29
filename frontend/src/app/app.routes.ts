@@ -15,6 +15,8 @@ export const routes: Routes = [
   { path: 'colecao/:slug', data: { mode: 'collection' }, loadComponent: catalog },
   { path: 'novidades', data: { mode: 'new' }, loadComponent: catalog },
   { path: 'promocoes', data: { mode: 'sale' }, loadComponent: catalog },
+  { path: 'busca', data: { mode: 'search' }, loadComponent: catalog },
+  { path: 'p/:slug', loadComponent: () => import('./features/product/product-page').then((m) => m.ProductPage) },
 
   { path: 'entrar', title: 'Entrar | Atelier', canActivate: [guestGuard], loadComponent: () => import('./features/auth/login').then((m) => m.Login) },
   { path: 'cadastro', title: 'Criar conta | Atelier', canActivate: [guestGuard], loadComponent: () => import('./features/auth/register').then((m) => m.Register) },

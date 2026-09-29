@@ -31,7 +31,9 @@ public enum ErrorCode {
     PRODUCT_HAS_VARIANTS(HttpStatus.CONFLICT, "Produto com variantes não pode ser excluído; arquive-o"),
     INVALID_SALE_PRICE(HttpStatus.UNPROCESSABLE_CONTENT, "Preço promocional deve ser menor que o preço cheio"),
     STOCK_BELOW_RESERVED(HttpStatus.CONFLICT, "Estoque não pode ficar abaixo do reservado ou negativo"),
-    INVALID_FILTER(HttpStatus.BAD_REQUEST, "Filtro inválido");
+    INVALID_FILTER(HttpStatus.BAD_REQUEST, "Filtro inválido"),
+    INVALID_IMAGE(HttpStatus.UNPROCESSABLE_CONTENT, "Imagem inválida"),
+    INVALID_URL(HttpStatus.UNPROCESSABLE_CONTENT, "URL não permitida");
 
     public final HttpStatus status;
     public final String title;

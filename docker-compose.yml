@@ -1,6 +1,6 @@
 # Desenvolvimento local.
-#   docker compose up -d db mail     -> só banco e SMTP (API via IDE/mvn, front via npm start)
-#   docker compose up -d --build     -> banco + API em container
+#   docker compose up -d db mail storage  -> só dependências (API via IDE/mvn, front via npm start)
+#   docker compose up -d --build                       -> tudo, com a API em container
 services:
   db:
     image: postgres:16-alpine
@@ -24,6 +24,16 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # S3 falso para as imagens em dev (sem autenticação; bucket criado na subida).
+  # Não persiste: imagens enviadas em dev somem ao recriar o container (o seed usa ilustrações do frontend).
+  # Em hml/prod: S3 ou Cloudflare R2 de verdade (variáveis STORAGE_* da API).
+  storage:
+    image: adobe/s3mock:latest
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: atelier-media
+    ports:
+      - "9000:9090"
+
   api:
     build: ./backend
     environment:
@@ -31,6 +41,9 @@ services:
       DB_USER: atelier
       DB_PASSWORD: atelier
       MAIL_HOST: mail
+      STORAGE_ENDPOINT: http://storage:9090
+      # URL que o navegador usa para ler as imagens (em produção: a CDN)
+      STORAGE_PUBLIC_BASE_URL: http://localhost:9000/atelier-media
       # Catálogo de demonstração com 2 mil produtos (nunca usar "seed" em produção)
       SPRING_PROFILES_ACTIVE: seed
       BOOTSTRAP_ADMIN_EMAIL: admin@atelier.local
@@ -40,6 +53,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      storage:
+        condition: service_started
 
 volumes:
   pgdata:

@@ -85,8 +85,17 @@ abstract class CatalogFixtures extends IntegrationTest {
                 .body(Map.of("type", qty > 0 ? "PURCHASE" : "ADJUSTMENT", "quantity", qty, "reason", "teste")).send();
     }
 
+    /** Publicar exige imagem (RN-56): envia uma antes. */
     protected void publish(long productId) {
+        uploadImage(productId, null);
         ok(post("/api/admin/products/" + productId + "/publish").bearer(admin).send());
+    }
+
+    protected JsonNode uploadImage(long productId, Long colorId) {
+        var fields = new HashMap<String, String>();
+        fields.put("alt", "Foto do produto");
+        if (colorId != null) fields.put("colorId", colorId.toString());
+        return ok(multipart("/api/admin/products/" + productId + "/images", admin, jpeg(1200, 1600), "foto.jpg", fields));
     }
 
     protected JsonNode list(String query) {

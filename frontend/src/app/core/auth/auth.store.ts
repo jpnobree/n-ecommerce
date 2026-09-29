@@ -48,9 +48,12 @@ export class AuthStore {
   private refreshing: Promise<boolean> | null = null;
   private ready: Promise<unknown> = Promise.resolve();
 
-  /** Tenta recuperar a sessão pelo cookie sem bloquear a renderização; os guards aguardam {@link whenReady}. */
+  /**
+   * Tenta recuperar a sessão pelo cookie sem bloquear a renderização; os guards aguardam {@link whenReady}.
+   * Só tenta se a API marcou "has_session" (visitante anônimo não faz uma chamada que sempre falha).
+   */
   init(): void {
-    this.ready = this.refresh();
+    if (/(^|;\s*)has_session=1/.test(document.cookie)) this.ready = this.refresh();
   }
 
   whenReady(): Promise<unknown> {
