@@ -32,6 +32,7 @@ public enum ErrorCode {
     INVALID_SALE_PRICE(HttpStatus.UNPROCESSABLE_CONTENT, "Preço promocional deve ser menor que o preço cheio"),
     STOCK_BELOW_RESERVED(HttpStatus.CONFLICT, "Estoque não pode ficar abaixo do reservado ou negativo"),
     INVALID_FILTER(HttpStatus.BAD_REQUEST, "Filtro inválido");
+    ADDRESS_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Limite de endereços atingido");
 
     public final HttpStatus status;
     public final String title;
