@@ -1,5 +1,15 @@
 <header class="site-header">
   <a routerLink="/" class="brand">Atelier</a>
+  <nav class="header-nav" aria-label="Conta">
+    @if (auth.user(); as user) {
+      @if (auth.hasAnyRole(['ADMIN', 'OPERATOR'])) {
+        <a routerLink="/admin">Painel</a>
+      }
+      <a routerLink="/conta">Olá, {{ firstName(user.name) }}</a>
+    } @else {
+      <a routerLink="/entrar">Entrar</a>
+    }
+  </nav>
 </header>
 
 <main>
