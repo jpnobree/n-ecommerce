@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: atelier-api
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/atelier}
+    username: ${DB_USER:atelier}
+    password: ${DB_PASSWORD:atelier}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+  mvc:
+    problemdetails:
+      enabled: true
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  shutdown: graceful
+  compression:
+    enabled: true
+    min-response-size: 1KB
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  version: ${APP_VERSION:dev}
+
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${SENTRY_ENVIRONMENT:dev}
+  send-default-pii: false
+
+logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:}
+
+---
+# Homologação e produção: logs JSON, sem Swagger
+spring:
+  config:
+    activate:
+      on-profile: hml,prod
+logging:
+  structured:
+    format:
+      console: logstash
+# Actuator (health/prometheus) só na porta interna; o load balancer expõe apenas a 8080
+management:
+  server:
+    port: 8081
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
