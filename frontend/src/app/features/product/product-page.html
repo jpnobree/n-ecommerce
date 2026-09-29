@@ -112,12 +112,22 @@
         </fieldset>
       }
 
-      <button type="button" class="btn add-to-bag" disabled aria-describedby="bag-note">Adicionar à sacola</button>
-      <p id="bag-note" class="muted small">
-        @if (!selectedSizeId()) {
-          Escolha um tamanho.
+      <div class="buy-row">
+        <button type="button" class="btn add-to-bag" [disabled]="adding() || selectedStatus() === 'OUT'" (click)="addToBag()">
+          {{ adding() ? 'Adicionando…' : 'Adicionar à sacola' }}
+        </button>
+        <button type="button" class="favorite" (click)="wishlist.toggle(p.id)" [attr.aria-pressed]="wishlist.has(p.id)"
+                [attr.aria-label]="wishlist.has(p.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'">
+          {{ wishlist.has(p.id) ? '♥' : '♡' }}
+        </button>
+      </div>
+      <p class="small" role="status">
+        @if (bagMessage(); as m) {
+          {{ m }}
+          @if (added()) {
+            <a routerLink="/sacola">Ver sacola</a>
+          }
         }
-        A sacola chega na próxima etapa do projeto.
       </p>
 
       <p class="muted small">Ref. {{ selectedVariant()?.sku ?? p.sku }}</p>

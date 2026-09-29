@@ -36,6 +36,7 @@
     } @else {
       <a routerLink="/entrar">Entrar</a>
     }
+    <a routerLink="/sacola" [attr.aria-label]="'Sacola, ' + cart.count() + ' itens'">Sacola ({{ cart.count() }})</a>
   </nav>
 </header>
 

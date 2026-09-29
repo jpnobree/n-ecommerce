@@ -43,6 +43,9 @@ public class SecurityConfig {
                                 "/api/collections/**", "/api/products", "/api/products/**", "/api/search/**", "/api/home",
                                 "/api/seo/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/newsletter").permitAll()
+                        // Carrinho de convidado (X-Cart-Token); com Bearer, vira o carrinho da conta. Merge exige login.
+                        .requestMatchers("/api/cart/merge").authenticated()
+                        .requestMatchers("/api/cart", "/api/cart/**").permitAll()
                         .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "OPERATOR")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))

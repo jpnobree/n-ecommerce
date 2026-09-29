@@ -8,6 +8,9 @@ import { Availability, ProductPage as Page, VariantAvailability, VariantOption }
 import { SeoService, breadcrumbLd } from '../../core/seo/seo.service';
 import { MoneyPipe } from '../../shared/money.pipe';
 import { RelatedProducts } from './related-products';
+import { CartStore } from '../../core/cart/cart.store';
+import { WishlistStore } from '../../core/cart/wishlist.store';
+import { apiErrorMessage } from '../../core/api-errors';
 
 type Loaded = { status: 'ok'; page: Page } | { status: 'not-found' } | { status: 'error' };
 
@@ -118,7 +121,33 @@ export class ProductPage {
     void this.router.navigate([], { queryParams: { cor: slug }, queryParamsHandling: 'merge', replaceUrl: true });
   }
 
+  protected readonly wishlist = inject(WishlistStore);
+  private readonly cart = inject(CartStore);
+  protected readonly adding = signal(false);
+  protected readonly added = signal(false);
+  protected readonly bagMessage = signal<string | null>(null);
+
+  protected async addToBag(): Promise<void> {
+    const variant = this.selectedVariant();
+    this.added.set(false);
+    if (!variant) {
+      this.bagMessage.set('Escolha um tamanho.');
+      return;
+    }
+    this.adding.set(true);
+    try {
+      await this.cart.add(variant.id, 1);
+      this.added.set(true);
+      this.bagMessage.set('Adicionado à sacola.');
+    } catch (err) {
+      this.bagMessage.set(apiErrorMessage(err));
+    } finally {
+      this.adding.set(false);
+    }
+  }
+
   protected selectSize(sizeId: number): void {
+    this.bagMessage.set(null);
     this.selectedSizeId.set(sizeId);
   }
 

@@ -1,0 +1,126 @@
+<h1>Sacola</h1>
+
+@let cart = store.cart();
+
+@if (!cart) {
+  <p class="muted">Carregando…</p>
+} @else if (cart.items.length === 0) {
+  <div class="empty-state">
+    <p>Sua sacola está vazia.</p>
+    <a routerLink="/novidades" class="btn">Ver novidades</a>
+  </div>
+} @else {
+  @for (w of cart.warnings; track $index) {
+    <p class="notice" role="status">{{ w.message }}</p>
+  }
+  @if (error(); as e) {
+    <p class="form-error" role="alert">{{ e }}</p>
+  }
+
+  <div class="cart">
+    <ul class="cart-items">
+      @for (item of cart.items; track item.id; let i = $index) {
+        <li class="cart-item" [class.unavailable]="item.status === 'OUT_OF_STOCK' || item.status === 'UNAVAILABLE'">
+          <a [routerLink]="['/p', item.productSlug]" class="cart-thumb">
+            @if (item.imageUrl) {
+              <img [ngSrc]="item.imageUrl" [alt]="item.productName" width="96" height="128" [priority]="i < 3" />
+            }
+          </a>
+          <div class="cart-item-info">
+            <a [routerLink]="['/p', item.productSlug]"><strong>{{ item.productName }}</strong></a>
+            <p class="muted small">{{ item.color }} · Ref. {{ item.sku }}</p>
+            <p class="product-price">
+              @if (item.unitPrice < item.listPrice) {
+                <s>{{ item.listPrice | money }}</s>
+              }
+              <span>{{ item.unitPrice | money }}</span>
+            </p>
+            <div class="cart-item-controls">
+              <label>
+                <span class="visually-hidden">Tamanho</span>
+                <select [disabled]="busy()" (change)="update(item.id, { variantId: +$any($event.target).value })">
+                  @for (s of item.sizes; track s.variantId) {
+                    <option [value]="s.variantId" [selected]="s.variantId === item.variantId" [disabled]="!s.available && s.variantId !== item.variantId">
+                      {{ s.size }}{{ s.available ? '' : ' (esgotado)' }}
+                    </option>
+                  }
+                </select>
+              </label>
+              <label>
+                <span class="visually-hidden">Quantidade</span>
+                <select [disabled]="busy() || item.status === 'OUT_OF_STOCK'"
+                        (change)="update(item.id, { quantity: +$any($event.target).value })">
+                  @for (q of quantities; track q) {
+                    <option [value]="q" [selected]="q === item.quantity" [disabled]="q > item.maxQuantity && q !== item.quantity">{{ q }}</option>
+                  }
+                </select>
+              </label>
+              <button type="button" class="link danger" [disabled]="busy()" (click)="remove(item.id)">Remover</button>
+            </div>
+          </div>
+          <strong class="cart-item-total">{{ item.lineTotal | money }}</strong>
+        </li>
+      }
+    </ul>
+
+    <aside class="cart-summary" aria-label="Resumo">
+      @if (cart.coupon; as c) {
+        <p>Cupom <strong>{{ c.code }}</strong> <button type="button" class="link" (click)="removeCoupon()">remover</button></p>
+      } @else {
+        <form class="inline-form" (submit)="$event.preventDefault(); applyCoupon(code.value)">
+          <label class="field">
+            <span>Cupom</span>
+            <span class="inline-form-row">
+              <input #code autocomplete="off" />
+              <button type="submit" class="btn-outline" [disabled]="busy()">Aplicar</button>
+            </span>
+          </label>
+        </form>
+      }
+
+      <form class="inline-form" (submit)="$event.preventDefault(); setShipping(cep.value)">
+        <label class="field">
+          <span>Calcular frete</span>
+          <span class="inline-form-row">
+            <input #cep inputmode="numeric" autocomplete="postal-code" placeholder="00000-000" [value]="cart.shipping?.postalCode ?? ''" />
+            <button type="submit" class="btn-outline" [disabled]="busy()">Ok</button>
+          </span>
+        </label>
+        @if (cart.shipping; as s) {
+          <fieldset class="shipping-options">
+            <legend class="visually-hidden">Opções de frete</legend>
+            @for (o of s.options; track o.id) {
+              <label class="check">
+                <input type="radio" name="frete" [checked]="o.id === s.selected" (change)="setShipping(s.postalCode, o.id)" />
+                <span>{{ o.service }} · até {{ o.days }} dias úteis · {{ o.price | money }}</span>
+              </label>
+            }
+          </fieldset>
+        }
+      </form>
+
+      <dl class="totals">
+        <dt>Subtotal</dt>
+        <dd>{{ cart.totals.subtotal | money }}</dd>
+        @if (cart.totals.discount) {
+          <dt>Desconto</dt>
+          <dd>− {{ cart.totals.discount | money }}</dd>
+        }
+        @if (cart.totals.shipping !== null) {
+          <dt>Frete</dt>
+          <dd>{{ cart.totals.shipping === cart.totals.shippingDiscount ? 'Grátis' : ((cart.totals.shipping - cart.totals.shippingDiscount) | money) }}</dd>
+        }
+        <dt class="total">Total</dt>
+        <dd class="total">{{ cart.totals.total | money }}</dd>
+      </dl>
+
+      <button type="button" class="btn add-to-bag" disabled aria-describedby="checkout-note">Finalizar compra</button>
+      <p id="checkout-note" class="muted small">
+        @if (!cart.canCheckout) {
+          Ajuste os itens indisponíveis para continuar.
+        }
+        O checkout chega na próxima etapa do projeto.
+      </p>
+    </aside>
+  </div>
+}

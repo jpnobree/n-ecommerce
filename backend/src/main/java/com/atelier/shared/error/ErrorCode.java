@@ -33,7 +33,23 @@ public enum ErrorCode {
     STOCK_BELOW_RESERVED(HttpStatus.CONFLICT, "Estoque não pode ficar abaixo do reservado ou negativo"),
     INVALID_FILTER(HttpStatus.BAD_REQUEST, "Filtro inválido"),
     INVALID_IMAGE(HttpStatus.UNPROCESSABLE_CONTENT, "Imagem inválida"),
-    INVALID_URL(HttpStatus.UNPROCESSABLE_CONTENT, "URL não permitida");
+    INVALID_URL(HttpStatus.UNPROCESSABLE_CONTENT, "URL não permitida"),
+
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Estoque insuficiente"),
+    MAX_QUANTITY(HttpStatus.UNPROCESSABLE_CONTENT, "Máximo de 10 unidades por item"),
+    VARIANT_OF_OTHER_PRODUCT(HttpStatus.UNPROCESSABLE_CONTENT, "A troca deve ser do mesmo produto"),
+    WISHLIST_LIMIT(HttpStatus.UNPROCESSABLE_CONTENT, "Limite de favoritos atingido"),
+    COUPON_NOT_FOUND(HttpStatus.UNPROCESSABLE_CONTENT, "Cupom inválido"),
+    COUPON_NOT_STARTED(HttpStatus.UNPROCESSABLE_CONTENT, "Este cupom ainda não está valendo"),
+    COUPON_EXPIRED(HttpStatus.UNPROCESSABLE_CONTENT, "Cupom expirado"),
+    COUPON_REQUIRES_LOGIN(HttpStatus.UNPROCESSABLE_CONTENT, "Entre na sua conta para usar este cupom"),
+    COUPON_FIRST_ORDER_ONLY(HttpStatus.UNPROCESSABLE_CONTENT, "Cupom válido só na primeira compra"),
+    COUPON_USAGE_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Cupom esgotado"),
+    COUPON_USER_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Você já usou este cupom"),
+    COUPON_NO_ELIGIBLE_ITEMS(HttpStatus.UNPROCESSABLE_CONTENT, "Nenhum item da sacola participa deste cupom"),
+    COUPON_MIN_AMOUNT_NOT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Valor mínimo do cupom não atingido"),
+    COUPON_CODE_EXISTS(HttpStatus.CONFLICT, "Já existe um cupom com este código"),
+    COUPON_IN_USE(HttpStatus.CONFLICT, "Cupom já utilizado: só é possível desativar ou ajustar vigência e limites");
 
     public final HttpStatus status;
     public final String title;

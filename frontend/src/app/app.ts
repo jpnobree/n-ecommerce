@@ -4,6 +4,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { catchError, of } from 'rxjs';
 import { AuthStore } from './core/auth/auth.store';
+import { CartStore } from './core/cart/cart.store';
 import { CategoryNode } from './core/catalog/catalog.models';
 
 @Component({
@@ -13,6 +14,7 @@ import { CategoryNode } from './core/catalog/catalog.models';
 })
 export class App {
   protected readonly auth = inject(AuthStore);
+  protected readonly cart = inject(CartStore);
   protected readonly year = new Date().getFullYear();
 
   /** Menu principal: renderizado no SSR (links rastreáveis) e reaproveitado na hidratação. */

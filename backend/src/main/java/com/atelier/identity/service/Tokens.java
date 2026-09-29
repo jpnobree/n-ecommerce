@@ -8,19 +8,19 @@ import java.util.Base64;
 import java.util.HexFormat;
 
 /** Tokens opacos: 256 bits aleatórios entregues ao cliente, só o SHA-256 vai para o banco. */
-final class Tokens {
+public final class Tokens {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private Tokens() {}
 
-    static String random() {
+    public static String random() {
         byte[] bytes = new byte[32];
         RANDOM.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    static String sha256(String value) {
+    public static String sha256(String value) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);

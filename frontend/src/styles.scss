@@ -983,3 +983,122 @@ button.size-option {
 .related-placeholder {
   min-height: 320px;
 }
+
+// ---- Sacola ----
+.buy-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.buy-row .add-to-bag {
+  margin-top: 0;
+  flex: 1;
+}
+
+.favorite {
+  width: 44px;
+  min-height: 44px;
+  font-size: 1.25rem;
+  border: 1px solid var(--color-fg);
+  background: var(--color-bg);
+  cursor: pointer;
+}
+
+.cart {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 1024px) {
+  .cart {
+    grid-template-columns: 1fr 360px;
+    align-items: start;
+  }
+}
+
+.cart-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cart-item {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cart-item.unavailable {
+  opacity: 0.6;
+}
+
+.cart-thumb {
+  display: block;
+  background: #f1efea;
+  aspect-ratio: 3 / 4;
+}
+
+.cart-thumb img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cart-item-info p {
+  margin: var(--space-1) 0;
+}
+
+.cart-item-controls {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cart-item-controls select {
+  width: auto;
+  min-height: 36px;
+  padding: 4px 8px;
+}
+
+.cart-summary {
+  border: 1px solid var(--color-border);
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.inline-form-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.shipping-options {
+  border: 0;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.totals dd {
+  margin: 0;
+  text-align: right;
+}
+
+.totals .total {
+  font-weight: 600;
+  font-size: 1.125rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-2);
+}

@@ -119,6 +119,11 @@ public abstract class IntegrationTest {
             return this;
         }
 
+        public Req header(String name, String value) {
+            b.header(name, value);
+            return this;
+        }
+
         public Req bearer(String token) {
             b.header("Authorization", "Bearer " + token);
             return this;
@@ -146,6 +151,7 @@ public abstract class IntegrationTest {
     }
 
     protected Req get(String path) { return new Req("GET", path); }
+    protected Req patch(String path) { return new Req("PATCH", path); }
 
     /** Upload multipart (arquivo + campos de texto). */
     protected Res multipart(String path, String token, byte[] file, String filename, Map<String, String> fields) {

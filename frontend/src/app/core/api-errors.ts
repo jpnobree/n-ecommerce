@@ -12,6 +12,16 @@ const MESSAGES: Record<string, string> = {
   ADDRESS_LIMIT_REACHED: 'Você atingiu o limite de 10 endereços.',
   RATE_LIMITED: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
   NOT_FOUND: 'Não encontrado.',
+  MAX_QUANTITY: 'Máximo de 10 unidades por item.',
+  COUPON_NOT_FOUND: 'Cupom inválido.',
+  COUPON_NOT_STARTED: 'Este cupom ainda não está valendo.',
+  COUPON_EXPIRED: 'Este cupom expirou.',
+  COUPON_REQUIRES_LOGIN: 'Entre na sua conta para usar este cupom.',
+  COUPON_FIRST_ORDER_ONLY: 'Cupom válido só na primeira compra.',
+  COUPON_USAGE_LIMIT_REACHED: 'Este cupom esgotou.',
+  COUPON_USER_LIMIT_REACHED: 'Você já usou este cupom.',
+  COUPON_NO_ELIGIBLE_ITEMS: 'Nenhum item da sacola participa deste cupom.',
+  WISHLIST_LIMIT: 'Limite de favoritos atingido.',
 };
 
 interface Problem {
@@ -28,6 +38,8 @@ export function apiErrorMessage(err: unknown): string {
   if (err instanceof HttpErrorResponse && err.status === 0) return 'Sem conexão com o servidor. Tente novamente.';
   const p = problem(err);
   if (p?.code === 'ACCOUNT_LOCKED') return `Conta bloqueada temporariamente. ${p.detail ?? ''}`.trim();
+  // O detalhe da API já diz o que falta ("Disponível: 2 unidade(s)", "Faltam R$ 50,00...").
+  if (p?.code === 'INSUFFICIENT_STOCK' || p?.code === 'COUPON_MIN_AMOUNT_NOT_REACHED') return p.detail ?? 'Não foi possível.';
   if (p?.code && MESSAGES[p.code]) return MESSAGES[p.code];
   if (p?.code === 'VALIDATION_ERROR') return 'Verifique os campos destacados.';
   return 'Algo deu errado. Tente novamente.';

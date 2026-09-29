@@ -12,7 +12,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Cria dados de catálogo pelo próprio admin da API. Slugs com sufixo único isolam cada teste. */
-abstract class CatalogFixtures extends IntegrationTest {
+public abstract class CatalogFixtures extends IntegrationTest {
 
     protected String admin;
     protected String tag;

@@ -13,6 +13,7 @@ import { apiErrorMessage } from '../../core/api-errors';
       <nav class="account-nav" aria-label="Minha conta">
         <a routerLink="dados" routerLinkActive="active">Meus dados</a>
         <a routerLink="enderecos" routerLinkActive="active">Endereços</a>
+        <a routerLink="favoritos" routerLinkActive="active">Favoritos</a>
         <a routerLink="senha" routerLinkActive="active">Senha</a>
         <button type="button" class="link" (click)="auth.logout()">Sair</button>
       </nav>
