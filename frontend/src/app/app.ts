@@ -5,6 +5,9 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { catchError, of } from 'rxjs';
 import { AuthStore } from './core/auth/auth.store';
 import { CategoryNode } from './core/catalog/catalog.models';
+import { Component, inject } from '@angular/core';
+import { RouterLink, RouterOutlet } from '@angular/router';
+import { AuthStore } from './core/auth/auth.store';
 
 @Component({
   selector: 'app-root',
