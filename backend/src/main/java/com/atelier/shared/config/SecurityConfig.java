@@ -2,17 +2,25 @@ package com.atelier.shared.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+
+import java.util.Map;
 
 /**
- * API stateless. Autenticação JWT entra na Fase 2; até lá só as rotas públicas abaixo respondem.
- * CSRF desligado: a API usa Bearer no header (ver PRD, seção 8.2).
+ * API stateless com JWT (Bearer). CSRF desligado porque nenhuma rota autentica por cookie; as duas que
+ * leem o cookie de refresh exigem X-Requested-With (ver AuthController). PRD, seções 8.2 e 20.
  */
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
@@ -22,14 +30,35 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .httpBasic(b -> b.disable())
                 .formLogin(f -> f.disable())
-                .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .headers(h -> h
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'"))
                         .frameOptions(f -> f.deny()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/status", "/actuator/health/**", "/actuator/prometheus", "/error").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/refresh",
+                                "/api/auth/logout", "/api/auth/verify-email", "/api/auth/forgot-password",
+                                "/api/auth/reset-password").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/categories", "/api/categories/**", "/api/collections",
+                                "/api/collections/**", "/api/products", "/api/products/**").permitAll()
+                        .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "OPERATOR")
                         .anyRequest().authenticated())
+                .oauth2ResourceServer(rs -> rs.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
                 .build();
+    }
+
+    private static JwtAuthenticationConverter jwtAuthenticationConverter() {
+        var authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+        var converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
+    }
+
+    /** BCrypt custo 12, com prefixo {id} para permitir migrar de algoritmo depois. */
+    @Bean
+    PasswordEncoder passwordEncoder() {
+        return new DelegatingPasswordEncoder("bcrypt", Map.of("bcrypt", new BCryptPasswordEncoder(12)));
     }
 }

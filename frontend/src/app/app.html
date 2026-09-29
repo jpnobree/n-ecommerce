@@ -1,8 +1,40 @@
+<a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
 <header class="site-header">
   <a routerLink="/" class="brand">Atelier</a>
+
+  <nav class="main-nav" aria-label="Categorias">
+    <ul>
+      @for (c of categories(); track c.id) {
+        <li class="nav-item">
+          <a [routerLink]="['/c', c.path]" routerLinkActive="active">{{ c.name }}</a>
+          @if (c.children.length) {
+            <ul class="nav-sub">
+              @for (s of c.children; track s.id) {
+                <li><a [routerLink]="['/c', s.path]">{{ s.name }}</a></li>
+              }
+            </ul>
+          }
+        </li>
+      }
+      <li class="nav-item"><a routerLink="/novidades" routerLinkActive="active">Novidades</a></li>
+      <li class="nav-item"><a routerLink="/promocoes" routerLinkActive="active">Promoções</a></li>
+    </ul>
+  </nav>
+
+  <nav class="header-nav" aria-label="Conta">
+    @if (auth.user(); as user) {
+      @if (auth.hasAnyRole(['ADMIN', 'OPERATOR'])) {
+        <a routerLink="/admin">Painel</a>
+      }
+      <a routerLink="/conta">Olá, {{ firstName(user.name) }}</a>
+    } @else {
+      <a routerLink="/entrar">Entrar</a>
+    }
+  </nav>
 </header>
 
-<main>
+<main id="conteudo">
   <router-outlet />
 </main>
 

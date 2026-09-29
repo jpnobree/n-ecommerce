@@ -1,23 +1,23 @@
 package com.atelier.shared.web;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.atelier.shared.config.AppProperties;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Endpoint público mínimo para o "hello" ponta a ponta da Fase 1 (frontend → API). */
+/** Endpoint público mínimo para o "hello" ponta a ponta (frontend → API). */
 @RestController
 public class StatusController {
 
     record Status(String status, String version) {}
 
-    private final String version;
+    private final AppProperties app;
 
-    StatusController(@Value("${app.version:dev}") String version) {
-        this.version = version;
+    StatusController(AppProperties app) {
+        this.app = app;
     }
 
     @GetMapping("/api/status")
     Status status() {
-        return new Status("UP", version);
+        return new Status("UP", app.version());
     }
 }
