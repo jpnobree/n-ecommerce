@@ -17,6 +17,11 @@ spring:
   threads:
     virtual:
       enabled: true
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
 
 server:
   shutdown: graceful
@@ -36,9 +41,20 @@ management:
     health:
       probes:
         enabled: true
+  # Dependências externas não entram no health: SMTP fora do ar não pode tirar a loja do ar
+  health:
+    mail:
+      enabled: false
 
 app:
   version: ${APP_VERSION:dev}
+  frontend-url: ${APP_FRONTEND_URL:http://localhost:4200}
+  mail-from: ${APP_MAIL_FROM:Atelier <nao-responda@atelier.local>}
+  auth:
+    jwt-private-key: ${JWT_PRIVATE_KEY:}
+    jwt-public-key: ${JWT_PUBLIC_KEY:}
+    bootstrap-admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
 
 sentry:
   dsn: ${SENTRY_DSN:}
@@ -60,6 +76,9 @@ logging:
   structured:
     format:
       console: logstash
+# Atrás do load balancer: IP real do cliente via X-Forwarded-For (usado no rate limit)
+server:
+  forward-headers-strategy: native
 # Actuator (health/prometheus) só na porta interna; o load balancer expõe apenas a 8080
 management:
   server:

@@ -2,49 +2,15 @@ package com.atelier;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Sobe a aplicação inteira contra um PostgreSQL real: migrations, segurança e endpoints públicos. */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(ApplicationTests.Containers.class)
-class ApplicationTests {
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class Containers {
-        @Bean
-        @ServiceConnection
-        PostgreSQLContainer postgres() {
-            return new PostgreSQLContainer("postgres:16-alpine");
-        }
-    }
-
-    @Value("${local.server.port}")
-    int port;
+/** Infraestrutura da Fase 1: migrations, endpoints públicos, X-Request-Id, formato de erro. */
+class ApplicationTests extends IntegrationTest {
 
     @Autowired
     JdbcTemplate jdbc;
-
-    private final HttpClient http = HttpClient.newHttpClient();
-
-    private HttpResponse<String> get(String path, String requestId) throws Exception {
-        var req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path));
-        if (requestId != null) req.header("X-Request-Id", requestId);
-        return http.send(req.build(), HttpResponse.BodyHandlers.ofString());
-    }
 
     @Test
     void migrationsCreateExtensions() {
@@ -53,23 +19,34 @@ class ApplicationTests {
     }
 
     @Test
-    void publicEndpointsRespond() throws Exception {
-        var status = get("/api/status", null);
-        assertThat(status.statusCode()).isEqualTo(200);
-        assertThat(status.body()).contains("\"status\":\"UP\"");
-        assertThat(status.headers().firstValue("X-Request-Id")).isPresent();
+    void publicEndpointsRespond() {
+        var status = get("/api/status").send();
+        assertThat(status.status()).isEqualTo(200);
+        assertThat(status.text("status")).isEqualTo("UP");
+        assertThat(status.raw().headers().firstValue("X-Request-Id")).isPresent();
 
-        assertThat(get("/actuator/health/readiness", null).statusCode()).isEqualTo(200);
+        assertThat(get("/actuator/health/readiness").send().status()).isEqualTo(200);
     }
 
     @Test
     void requestIdIsEchoedOnlyWhenSafe() throws Exception {
-        assertThat(get("/api/status", "abc12345-ok").headers().firstValue("X-Request-Id")).hasValue("abc12345-ok");
-        assertThat(get("/api/status", "bad id!").headers().firstValue("X-Request-Id")).isNotEqualTo("bad id!");
+        var client = java.net.http.HttpClient.newHttpClient();
+        var base = java.net.URI.create("http://localhost:" + port + "/api/status");
+        var ok = client.send(java.net.http.HttpRequest.newBuilder(base).header("X-Request-Id", "abc12345-ok").build(),
+                java.net.http.HttpResponse.BodyHandlers.discarding());
+        var bad = client.send(java.net.http.HttpRequest.newBuilder(base).header("X-Request-Id", "bad id!").build(),
+                java.net.http.HttpResponse.BodyHandlers.discarding());
+        assertThat(ok.headers().firstValue("X-Request-Id")).hasValue("abc12345-ok");
+        assertThat(bad.headers().firstValue("X-Request-Id")).isNotEqualTo("bad id!");
     }
 
     @Test
-    void everythingElseRequiresAuthentication() throws Exception {
-        assertThat(get("/api/orders", null).statusCode()).isEqualTo(401);
+    void validationErrorsUseProblemDetails() {
+        var res = post("/api/auth/register").body("{\"email\":\"nao-e-email\"}").send();
+        assertThat(res.status()).isEqualTo(400);
+        assertThat(res.raw().headers().firstValue("Content-Type")).hasValueSatisfying(ct -> assertThat(ct).contains("problem+json"));
+        assertThat(res.text("code")).isEqualTo("VALIDATION_ERROR");
+        assertThat(res.json().path("errors").toString()).contains("email", "password", "name");
+        assertThat(res.text("requestId")).isNotBlank();
     }
 }

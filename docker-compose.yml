@@ -1,5 +1,5 @@
 # Desenvolvimento local.
-#   docker compose up -d db          -> só o banco (API via IDE/mvn, front via npm start)
+#   docker compose up -d db mail     -> só banco e SMTP (API via IDE/mvn, front via npm start)
 #   docker compose up -d --build     -> banco + API em container
 services:
   db:
@@ -17,12 +17,22 @@ services:
       interval: 5s
       retries: 10
 
+  # SMTP de desenvolvimento: todos os e-mails aparecem em http://localhost:8025
+  mail:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   api:
     build: ./backend
     environment:
       DB_URL: jdbc:postgresql://db:5432/atelier
       DB_USER: atelier
       DB_PASSWORD: atelier
+      MAIL_HOST: mail
+      BOOTSTRAP_ADMIN_EMAIL: admin@atelier.local
+      BOOTSTRAP_ADMIN_PASSWORD: admin-dev-123456
     ports:
       - "8080:8080"
     depends_on:
