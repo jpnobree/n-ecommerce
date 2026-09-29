@@ -18,7 +18,6 @@ const PUBLIC_GET = /^\/api\/(products|categories|collections)(\/|\?|$)/;
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   if (!req.url.startsWith('/api/') || (req.method === 'GET' && PUBLIC_GET.test(req.url))) return next(req);
-  if (!req.url.startsWith('/api/')) return next(req);
 
   const auth = inject(AuthStore);
   const withAuth = (r: HttpRequest<unknown>) => {

@@ -7,8 +7,6 @@ const catalog = () => import('./features/catalog/catalog-page').then((m) => m.Ca
 function categoryMatcher(segments: UrlSegment[]) {
   return segments[0]?.path === 'c' && segments.length >= 2 && segments.length <= 4 ? { consumed: segments } : null;
 }
-import { Routes } from '@angular/router';
-import { authGuard, guestGuard, roleGuard } from './core/auth/auth.guards';
 
 export const routes: Routes = [
   { path: '', loadComponent: () => import('./features/home/home').then((m) => m.Home) },
