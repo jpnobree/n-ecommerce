@@ -1,0 +1,33 @@
+# Desenvolvimento local.
+#   docker compose up -d db          -> só o banco (API via IDE/mvn, front via npm start)
+#   docker compose up -d --build     -> banco + API em container
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: atelier
+      POSTGRES_USER: atelier
+      POSTGRES_PASSWORD: atelier
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atelier -d atelier"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/atelier
+      DB_USER: atelier
+      DB_PASSWORD: atelier
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
