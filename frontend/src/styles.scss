@@ -116,7 +116,7 @@ a {
   font-size: 0.875rem;
 }
 
-input:not([type='checkbox']),
+input:not([type='checkbox']):not([type='radio']),
 select {
   font: inherit;
   padding: 10px 12px;
@@ -1101,4 +1101,38 @@ button.size-option {
   font-size: 1.125rem;
   border-top: 1px solid var(--color-border);
   padding-top: var(--space-2);
+}
+
+// ---- checkout ----
+
+.checkout-steps {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.checkout-steps h2,
+.cart-summary h2 {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 var(--space-2);
+}
+
+.address-option {
+  align-items: flex-start;
+  margin-bottom: var(--space-2);
+}
+
+.summary-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.summary-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
 }

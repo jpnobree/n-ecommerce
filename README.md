@@ -52,6 +52,8 @@ docker run --rm -v "$PWD/backend:/src" -v atelier-m2:/root/.m2 -v /var/run/docke
 | `GET /api/products` | listagem com filtros e facetas: `category`, `collection`, `sizes`, `colors`, `gender`, `minPrice`/`maxPrice` (centavos), `inStock`, `onSale`, `sort` (`newest`, `best_sellers`, `price_asc`, `price_desc`), `page`, `pageSize` (≤ 48) |
 | `GET /api/categories`, `/api/categories/page?path=`, `/api/collections` | árvore de categorias, página de categoria, coleções |
 | `/api/cart`, `/api/cart/items`, `/coupon`, `/shipping`, `/merge` | sacola de convidado (header `X-Cart-Token`) ou da conta (Bearer); frete por tabela CEP × peso, grátis acima de `APP_CART_FREE_SHIPPING_ABOVE` centavos (padrão 29900) |
+| `POST /api/checkout` | cria o pedido (`PENDING_PAYMENT`) e reserva o estoque por 30 min; corpo `{addressId, shippingOption}` + header obrigatório `Idempotency-Key` (UUID). Valores sempre recalculados no servidor |
+| `GET /api/orders/{número}`, `POST /api/orders/{número}/cancel` | pedido do cliente (snapshot) e cancelamento antes do pagamento; pedidos não pagos expiram sozinhos |
 | `/api/me/wishlist` | favoritos |
 | `/api/admin/coupons` | cupons (ADMIN) |
 | `/api/admin/categories`, `/collections`, `/colors`, `/sizes`, `/products` | cadastro do catálogo (escrita: ADMIN; leitura e estoque: ADMIN e OPERATOR) |

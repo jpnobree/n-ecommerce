@@ -28,6 +28,14 @@ public class CartService {
 
     static final int MAX_PER_ITEM = 10;
 
+    /**
+     * Disponível para ESTE carrinho: livre + o que o próprio pedido pendente dele já reservou (senão, depois de
+     * finalizar, a sacola acusaria falta do que está guardado para ela mesma). Parâmetro :cart; aliases i (inventory), v (variante).
+     */
+    private static final String AVAILABLE = """
+            (coalesce(i.on_hand - i.reserved, 0) + coalesce((SELECT sum(oi.quantity) FROM order_item oi JOIN orders o ON o.id = oi.order_id
+              WHERE o.cart_id = :cart AND o.status = 'PENDING_PAYMENT' AND oi.variant_id = v.id), 0))""";
+
     // ---- respostas ----
 
     public record SizeChoice(Long variantId, String size, boolean available) {}
@@ -106,7 +114,7 @@ public class CartService {
     @Transactional
     public CartView add(Long userId, String guestToken, long variantId, int quantity) {
         Resolved r = findOrCreate(userId, guestToken);
-        Variant v = variant(variantId).filter(Variant::sellable).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Produto indisponível"));
+        Variant v = variant(r.cart().id, variantId).filter(Variant::sellable).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Produto indisponível"));
         CartItem item = items.findByCartIdAndVariantId(r.cart().id, variantId).orElse(null);
         int total = quantity + (item == null ? 0 : item.quantity);
         checkQuantity(total, v.available());
@@ -129,8 +137,8 @@ public class CartService {
         CartItem item = items.findByIdAndCartId(itemId, cart.id).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
         int qty = quantity != null ? quantity : item.quantity;
         if (variantId != null && variantId != item.variantId.longValue()) {
-            Variant current = variant(item.variantId).orElseThrow();
-            Variant target = variant(variantId).filter(Variant::sellable).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Produto indisponível"));
+            Variant current = variant(cart.id, item.variantId).orElseThrow();
+            Variant target = variant(cart.id, variantId).filter(Variant::sellable).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Produto indisponível"));
             if (target.productId() != current.productId()) throw new BusinessException(ErrorCode.VARIANT_OF_OTHER_PRODUCT);
             CartItem existing = items.findByCartIdAndVariantId(cart.id, variantId).orElse(null);
             if (existing != null) {
@@ -142,7 +150,7 @@ public class CartService {
             item.variantId = variantId;
             item.priceSnapshot = target.effectivePrice(clock.instant());
         } else {
-            checkQuantity(qty, variant(item.variantId).map(Variant::available).orElse(0));
+            checkQuantity(qty, variant(cart.id, item.variantId).map(Variant::available).orElse(0));
         }
         item.quantity = qty;
         items.save(item);
@@ -190,9 +198,12 @@ public class CartService {
     @Transactional
     public CartView setShipping(Long userId, String guestToken, String postalCode, String option) {
         Resolved r = findOrCreate(userId, guestToken);
-        r.cart().shippingPostalCode = postalCode;
-        r.cart().shippingOption = option;
-        touch(r.cart());
+        // Reenviar o mesmo CEP/opção (ex.: ao abrir o checkout) não muda a versão: o pedido pendente continua valendo
+        if (!postalCode.equals(r.cart().shippingPostalCode) || !Objects.equals(option, r.cart().shippingOption)) {
+            r.cart().shippingPostalCode = postalCode;
+            r.cart().shippingOption = option;
+            touch(r.cart());
+        }
         return render(r.cart(), userId, r.newToken());
     }
 
@@ -232,8 +243,50 @@ public class CartService {
 
     // ---- leitura ----
 
+    // ---- checkout ----
+
+    /** Linha como vai para o pedido: preço efetivo de agora e desconto rateado. */
+    public record QuoteLine(long productId, long variantId, String sku, String productName, String productSlug, String color,
+                            String size, String imageUrl, long unitPrice, long listPrice, int quantity, long discount,
+                            int weightGrams) {}
+
+    public record QuoteShipping(String postalCode, String option, String carrier, String service, int days) {}
+
+    /** cartVersion: o pedido só é criado se o carrinho não mudou desde esta cotação. */
+    public record CheckoutQuote(UUID cartId, int cartVersion, List<QuoteLine> lines, Pricing.Totals totals, Coupon coupon,
+                                QuoteShipping shipping, List<Warning> warnings, boolean canCheckout) {}
+
+    /**
+     * Recalcula o carrinho da conta com o CEP do endereço de entrega (PRD 9.2, passos 3–7). Transação própria:
+     * avisos que mudam o carrinho (preço, cupom removido) ficam gravados mesmo que o checkout seja recusado.
+     */
+    @Transactional
+    public CheckoutQuote checkoutQuote(long userId, String postalCode, String option) {
+        Cart cart = carts.lockByUserId(userId).orElseThrow(() -> new BusinessException(ErrorCode.CART_EMPTY));
+        // Só grava se mudou: não mexer na versão faz o duplo clique cair no mesmo pedido pendente
+        if (!postalCode.equals(cart.shippingPostalCode) || !Objects.equals(option, cart.shippingOption)) {
+            cart.shippingPostalCode = postalCode;
+            cart.shippingOption = option;
+        }
+        Computed c = compute(cart, userId, null);
+        carts.saveAndFlush(cart);
+        List<QuoteLine> lines = c.rows.stream().filter(Row::countsInTotal).map(r -> new QuoteLine(r.productId, r.variantId,
+                r.sku, r.productName, r.productSlug, r.color, r.size, r.imageUrl, r.effective, r.listPrice, r.quantity,
+                c.totals.allocation().getOrDefault(r.itemId, 0L), r.weightGrams)).toList();
+        ShippingTable.Option o = c.shipping;
+        return new CheckoutQuote(cart.id, cart.version, lines, c.totals, c.coupon,
+                new QuoteShipping(postalCode, o.id(), o.carrier(), o.service(), o.days()), c.view.warnings(), c.view.canCheckout());
+    }
+
+    // ---- leitura ----
+
+    private record Computed(CartView view, List<Row> rows, Pricing.Totals totals, Coupon coupon, ShippingTable.Option shipping) {}
+
     private CartView render(Cart cart, Long userId, String newToken) {
-        Instant now = clock.instant();
+        return compute(cart, userId, newToken).view;
+    }
+
+    private Computed compute(Cart cart, Long userId, String newToken) {
         List<Row> rows = rows(cart.id);
         List<Warning> warnings = new ArrayList<>();
 
@@ -257,10 +310,11 @@ public class CartService {
         List<Pricing.Line> lines = lines(rows, coupon);
         Pricing.Shipping shippingChoice = null;
         ShippingView shippingView = null;
+        ShippingTable.Option selected = null;
         if (cart.shippingPostalCode != null) {
             int weight = rows.stream().filter(Row::countsInTotal).mapToInt(r -> r.weightGrams * r.quantity).sum();
             List<ShippingTable.Option> options = ShippingTable.quote(cart.shippingPostalCode, Math.max(weight, 1));
-            ShippingTable.Option selected = options.stream().filter(o -> o.id().equals(cart.shippingOption)).findFirst().orElse(options.getFirst());
+            selected = options.stream().filter(o -> o.id().equals(cart.shippingOption)).findFirst().orElse(options.getFirst());
             shippingChoice = lines.isEmpty() ? null : new Pricing.Shipping(selected.price(), selected.freeAboveThreshold());
             shippingView = new ShippingView(cart.shippingPostalCode, selected.id(), options);
         }
@@ -280,15 +334,16 @@ public class CartService {
             }
         }
 
-        Map<String, List<SizeChoice>> sizes = sizeChoices(rows);
+        Map<String, List<SizeChoice>> sizes = sizeChoices(cart.id, rows);
         List<ItemView> views = rows.stream().map(r -> new ItemView(r.itemId, r.variantId, r.productSlug, r.productName, r.sku,
                 r.color, r.size, r.imageUrl, r.effective, r.listPrice, r.quantity, r.effective * r.quantity, r.status(),
                 Math.max(0, Math.min(MAX_PER_ITEM, r.available)), sizes.getOrDefault(r.productId + ":" + r.colorId, List.of()))).toList();
 
         boolean canCheckout = !rows.isEmpty() && rows.stream().allMatch(r -> r.status().equals("OK"));
-        return new CartView(newToken, views, rows.stream().mapToInt(r -> r.quantity).sum(),
+        var view = new CartView(newToken, views, rows.stream().mapToInt(r -> r.quantity).sum(),
                 new TotalsView(totals.subtotal(), totals.discount(), totals.shipping(), totals.shippingDiscount(), totals.total()),
                 coupon == null ? null : new CouponView(coupon.code, coupon.description), shippingView, warnings, canCheckout);
+        return new Computed(view, rows, totals, coupon, selected);
     }
 
     /** Linhas que entram no total (esgotados e indisponíveis ficam de fora) com a elegibilidade do cupom. */
@@ -310,15 +365,16 @@ public class CartService {
                 || couponPaths.stream().anyMatch(p -> r.categoryPath.equals(p) || r.categoryPath.startsWith(p + "/"));
     }
 
-    private Map<String, List<SizeChoice>> sizeChoices(List<Row> rows) {
+    private Map<String, List<SizeChoice>> sizeChoices(UUID cartId, List<Row> rows) {
         Map<String, List<SizeChoice>> result = new HashMap<>();
         if (rows.isEmpty()) return result;
         jdbc.query("""
-                SELECT v.id, v.product_id, v.color_id, s.name, coalesce(i.on_hand - i.reserved, 0) > 0
+                SELECT v.id, v.product_id, v.color_id, s.name, {AVAILABLE} > 0
                   FROM product_variant v JOIN size s ON s.id = v.size_id LEFT JOIN inventory i ON i.variant_id = v.id
                  WHERE v.product_id IN (:ids) AND v.active
                  ORDER BY s.size_group, s.sort_order
-                """, new MapSqlParameterSource("ids", rows.stream().map(r -> r.productId).distinct().toList()), rs -> {
+                """.replace("{AVAILABLE}", AVAILABLE), new MapSqlParameterSource("ids", rows.stream().map(r -> r.productId).distinct().toList())
+                .addValue("cart", cartId), rs -> {
             String key = rs.getLong(2) + ":" + rs.getLong(3);
             result.computeIfAbsent(key, k -> new ArrayList<>()).add(new SizeChoice(rs.getLong(1), rs.getString(4), rs.getBoolean(5)));
         });
@@ -355,7 +411,7 @@ public class CartService {
                 SELECT ci.id, ci.variant_id, ci.quantity, ci.price_snapshot,
                        v.sku, v.active, v.price, v.sale_price, v.sale_starts_at, v.sale_ends_at, v.color_id,
                        p.id, p.slug, p.name, p.status = 'ACTIVE', p.base_price, p.weight_grams, cat.slug_path,
-                       c.name, s.name, coalesce(i.on_hand - i.reserved, 0),
+                       c.name, s.name, {AVAILABLE},
                        (SELECT pi.url FROM product_image pi WHERE pi.product_id = p.id
                          ORDER BY (pi.color_id = v.color_id) DESC NULLS LAST, pi.is_main DESC, pi.position LIMIT 1)
                   FROM cart_item ci
@@ -367,7 +423,7 @@ public class CartService {
                   LEFT JOIN inventory i ON i.variant_id = v.id
                  WHERE ci.cart_id = :cart
                  ORDER BY ci.created_at, ci.id
-                """, new MapSqlParameterSource("cart", cartId), (rs, n) -> {
+                """.replace("{AVAILABLE}", AVAILABLE), new MapSqlParameterSource("cart", cartId), (rs, n) -> {
             Row r = new Row();
             r.itemId = rs.getLong(1);
             r.variantId = rs.getLong(2);
@@ -400,13 +456,13 @@ public class CartService {
         }
     }
 
-    private Optional<Variant> variant(long variantId) {
+    private Optional<Variant> variant(UUID cartId, long variantId) {
         return jdbc.query("""
                 SELECT v.product_id, v.active AND p.status = 'ACTIVE', v.price, v.sale_price, v.sale_starts_at, v.sale_ends_at,
-                       p.base_price, coalesce(i.on_hand - i.reserved, 0)
+                       p.base_price, {AVAILABLE}
                   FROM product_variant v JOIN product p ON p.id = v.product_id LEFT JOIN inventory i ON i.variant_id = v.id
                  WHERE v.id = :id
-                """, new MapSqlParameterSource("id", variantId),
+                """.replace("{AVAILABLE}", AVAILABLE), new MapSqlParameterSource("id", variantId).addValue("cart", cartId),
                 (rs, n) -> new Variant(rs.getLong(1), rs.getBoolean(2), priced(rs, 3), rs.getLong(7), rs.getInt(8))).stream().findFirst();
     }
 

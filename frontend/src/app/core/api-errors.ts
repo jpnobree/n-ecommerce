@@ -22,6 +22,9 @@ const MESSAGES: Record<string, string> = {
   COUPON_USER_LIMIT_REACHED: 'Você já usou este cupom.',
   COUPON_NO_ELIGIBLE_ITEMS: 'Nenhum item da sacola participa deste cupom.',
   WISHLIST_LIMIT: 'Limite de favoritos atingido.',
+  CART_EMPTY: 'Sua sacola está vazia.',
+  ORDER_TOTAL_TOO_LOW: 'O total mínimo do pedido é R$ 0,50.',
+  INVALID_STATUS_TRANSITION: 'Este pedido não pode mais ser alterado.',
 };
 
 interface Problem {
@@ -40,6 +43,8 @@ export function apiErrorMessage(err: unknown): string {
   if (p?.code === 'ACCOUNT_LOCKED') return `Conta bloqueada temporariamente. ${p.detail ?? ''}`.trim();
   // O detalhe da API já diz o que falta ("Disponível: 2 unidade(s)", "Faltam R$ 50,00...").
   if (p?.code === 'INSUFFICIENT_STOCK' || p?.code === 'COUPON_MIN_AMOUNT_NOT_REACHED') return p.detail ?? 'Não foi possível.';
+  // Checkout recusado porque a sacola mudou: o detalhe lista o que mudou (preço, estoque, cupom)
+  if (p?.code === 'CART_CHANGED') return `Sua sacola mudou: ${p.detail ?? 'revise antes de finalizar'}.`;
   if (p?.code && MESSAGES[p.code]) return MESSAGES[p.code];
   if (p?.code === 'VALIDATION_ERROR') return 'Verifique os campos destacados.';
   return 'Algo deu errado. Tente novamente.';

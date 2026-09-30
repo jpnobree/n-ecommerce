@@ -6,16 +6,19 @@ import com.atelier.shared.error.ErrorCode;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Estoque por variante. Toda alteração é um UPDATE condicional atômico (sem janela entre ler e escrever)
- * mais uma linha imutável em inventory_movement (PRD, seção 12). Reserva/baixa entram na Fase 6.
+ * mais uma linha imutável em inventory_movement (PRD, seção 12). Reserva e devolução pelo checkout; baixa (SALE) na Fase 7.
  */
 @Service
 public class InventoryService {
@@ -67,6 +70,42 @@ public class InventoryService {
                 """, params.addValue("onHand", level.onHand()).addValue("reserved", level.reserved()));
         denormalizer.recompute(List.of(productId));
         return level;
+    }
+
+    /**
+     * Reserva para um pedido (PRD 12.3): UPDATE condicional por variante em ordem crescente de id (sem deadlock entre
+     * checkouts com os mesmos itens). Só roda dentro da transação do pedido: qualquer falta desfaz tudo.
+     * @return variantes sem estoque suficiente (vazio = tudo reservado)
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public List<Long> reserve(Map<Long, Integer> quantities, long orderId) {
+        List<Long> missing = new ArrayList<>();
+        new TreeMap<>(quantities).forEach((variantId, qty) -> {
+            if (!apply("RESERVE", variantId, qty, orderId, "i.on_hand - i.reserved >= :qty")) missing.add(variantId);
+        });
+        return missing;
+    }
+
+    /** Devolve a reserva de um pedido cancelado ou expirado antes do pagamento. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void release(Map<Long, Integer> quantities, long orderId) {
+        new TreeMap<>(quantities).forEach((variantId, qty) -> apply("RELEASE", variantId, -qty, orderId, "true")); // CHECK (reserved >= 0) acusa inconsistência
+    }
+
+    private boolean apply(String type, long variantId, int reservedDelta, long orderId, String condition) {
+        var params = new MapSqlParameterSource().addValue("variantId", variantId).addValue("qty", reservedDelta)
+                .addValue("type", type).addValue("order", orderId);
+        List<StockLevel> updated = jdbc.query("""
+                UPDATE inventory i SET reserved = i.reserved + :qty, version = i.version + 1, updated_at = now()
+                 WHERE i.variant_id = :variantId AND %s
+                RETURNING i.on_hand, i.reserved
+                """.formatted(condition), params, (rs, n) -> level(rs.getInt(1), rs.getInt(2)));
+        if (updated.isEmpty()) return false;
+        jdbc.update("""
+                INSERT INTO inventory_movement (variant_id, type, quantity, on_hand_after, reserved_after, reference_type, reference_id)
+                VALUES (:variantId, :type, :qty, :onHand, :reserved, 'ORDER', :order)
+                """, params.addValue("onHand", updated.getFirst().onHand()).addValue("reserved", updated.getFirst().reserved()));
+        return true;
     }
 
     @Transactional(readOnly = true)

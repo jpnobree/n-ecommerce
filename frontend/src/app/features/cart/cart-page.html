@@ -114,13 +114,12 @@
         <dd class="total">{{ cart.totals.total | money }}</dd>
       </dl>
 
-      <button type="button" class="btn add-to-bag" disabled aria-describedby="checkout-note">Finalizar compra</button>
-      <p id="checkout-note" class="muted small">
-        @if (!cart.canCheckout) {
-          Ajuste os itens indisponíveis para continuar.
-        }
-        O checkout chega na próxima etapa do projeto.
-      </p>
+      @if (cart.canCheckout) {
+        <a routerLink="/checkout" class="btn add-to-bag">Finalizar compra</a>
+      } @else {
+        <button type="button" class="btn add-to-bag" disabled aria-describedby="checkout-note">Finalizar compra</button>
+        <p id="checkout-note" class="muted small">Ajuste os itens indisponíveis para continuar.</p>
+      }
     </aside>
   </div>
 }

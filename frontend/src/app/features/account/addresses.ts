@@ -1,5 +1,6 @@
 import { HttpClient } from '@angular/common/http';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, input, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Observable, firstValueFrom } from 'rxjs';
 import { apiErrorMessage, applyFieldErrors } from '../../core/api-errors';
@@ -143,6 +144,9 @@ const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO R
 })
 export class Addresses implements OnInit {
   private readonly http = inject(HttpClient);
+  private readonly router = inject(Router);
+  /** Vindo do checkout: depois de salvar, volta para lá. Só caminhos internos. */
+  readonly returnUrl = input<string>();
   protected readonly ufs = UFS;
   protected readonly addresses = signal<Address[]>([]);
   /** null = formulário fechado; 0 = novo; id = editando. */
@@ -165,6 +169,7 @@ export class Addresses implements OnInit {
   });
 
   ngOnInit(): Promise<void> {
+    if (this.returnUrl()) this.edit(null);
     return this.load();
   }
 
@@ -214,6 +219,11 @@ export class Addresses implements OnInit {
         id ? this.http.put(`/api/me/addresses/${id}`, body) : this.http.post('/api/me/addresses', body),
       );
       this.editing.set(null);
+      const back = this.returnUrl();
+      if (back?.startsWith('/') && !back.startsWith('//')) {
+        await this.router.navigateByUrl(back);
+        return;
+      }
       await this.load();
     } catch (err) {
       applyFieldErrors(this.form, err);

@@ -49,7 +49,13 @@ public enum ErrorCode {
     COUPON_NO_ELIGIBLE_ITEMS(HttpStatus.UNPROCESSABLE_CONTENT, "Nenhum item da sacola participa deste cupom"),
     COUPON_MIN_AMOUNT_NOT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "Valor mínimo do cupom não atingido"),
     COUPON_CODE_EXISTS(HttpStatus.CONFLICT, "Já existe um cupom com este código"),
-    COUPON_IN_USE(HttpStatus.CONFLICT, "Cupom já utilizado: só é possível desativar ou ajustar vigência e limites");
+    COUPON_IN_USE(HttpStatus.CONFLICT, "Cupom já utilizado: só é possível desativar ou ajustar vigência e limites"),
+
+    CART_EMPTY(HttpStatus.UNPROCESSABLE_CONTENT, "Sua sacola está vazia"),
+    CART_CHANGED(HttpStatus.CONFLICT, "Sua sacola mudou. Revise antes de finalizar"),
+    IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT, "Chave de idempotência usada em outra requisição"),
+    ORDER_TOTAL_TOO_LOW(HttpStatus.UNPROCESSABLE_CONTENT, "O total mínimo do pedido é R$ 0,50"),
+    INVALID_STATUS_TRANSITION(HttpStatus.CONFLICT, "Operação não permitida no status atual do pedido");
 
     public final HttpStatus status;
     public final String title;

@@ -17,6 +17,8 @@ export const routes: Routes = [
   { path: 'promocoes', data: { mode: 'sale' }, loadComponent: catalog },
   { path: 'busca', data: { mode: 'search' }, loadComponent: catalog },
   { path: 'sacola', loadComponent: () => import('./features/cart/cart-page').then((m) => m.CartPage) },
+  { path: 'checkout', canActivate: [authGuard], loadComponent: () => import('./features/checkout/checkout-page').then((m) => m.CheckoutPage) },
+  { path: 'checkout/confirmacao/:number', canActivate: [authGuard], loadComponent: () => import('./features/checkout/order-confirmation').then((m) => m.OrderConfirmation) },
   { path: 'p/:slug', loadComponent: () => import('./features/product/product-page').then((m) => m.ProductPage) },
 
   { path: 'entrar', title: 'Entrar | Atelier', canActivate: [guestGuard], loadComponent: () => import('./features/auth/login').then((m) => m.Login) },

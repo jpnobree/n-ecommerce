@@ -9,6 +9,7 @@ export const serverRoutes: ServerRoute[] = [
   { path: 'verificar-email', renderMode: RenderMode.Client },
   { path: 'conta/**', renderMode: RenderMode.Client },
   { path: 'sacola', renderMode: RenderMode.Client },
+  { path: 'checkout/**', renderMode: RenderMode.Client },
   { path: 'admin/**', renderMode: RenderMode.Client },
   // Catálogo e produtos mudam o tempo todo: renderização por requisição.
   { path: '**', renderMode: RenderMode.Server },

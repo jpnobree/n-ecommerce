@@ -68,7 +68,7 @@ public abstract class IntegrationTest {
     protected JsonMapper json;
 
     @Autowired
-    RateLimitFilter rateLimit;
+    protected RateLimitFilter rateLimit;
 
     @MockitoBean
     protected JavaMailSender mailSender;

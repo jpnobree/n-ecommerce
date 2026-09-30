@@ -57,28 +57,39 @@ public class CouponService {
         return coupons.findByCode(code.trim().toUpperCase(Locale.ROOT)).orElseThrow(() -> new BusinessException(ErrorCode.COUPON_NOT_FOUND));
     }
 
-    /** Validade independente do conteúdo da sacola. Retorna o motivo da recusa ou null se vale. */
-    ErrorCode rejection(Coupon c, Long userId) {
+    /**
+     * Validade independente do conteúdo da sacola. Retorna o motivo da recusa ou null se vale.
+     * O checkout chama com o cupom travado (FOR UPDATE), o que torna os limites exatos sob concorrência.
+     */
+    public ErrorCode rejection(Coupon c, Long userId) {
         Instant now = clock.instant();
         if (!c.active) return ErrorCode.COUPON_NOT_FOUND;
         if (c.startsAt != null && c.startsAt.isAfter(now)) return ErrorCode.COUPON_NOT_STARTED;
         if (c.endsAt != null && !c.endsAt.isAfter(now)) return ErrorCode.COUPON_EXPIRED;
         if (userId == null && (c.firstOrderOnly || c.usageLimitPerUser != null)) return ErrorCode.COUPON_REQUIRES_LOGIN;
-        // ponytail: primeira compra = cliente sem uso confirmado de cupom; passa a olhar pedidos pagos na Fase 6.
-        if (c.firstOrderOnly && usages(c.id, userId, true) > 0) return ErrorCode.COUPON_FIRST_ORDER_ONLY;
-        if (c.usageLimit != null && usages(c.id, null, false) >= c.usageLimit) return ErrorCode.COUPON_USAGE_LIMIT_REACHED;
-        if (c.usageLimitPerUser != null && usages(c.id, userId, false) >= c.usageLimitPerUser) return ErrorCode.COUPON_USER_LIMIT_REACHED;
+        if (c.firstOrderOnly && hasPaidOrder(userId)) return ErrorCode.COUPON_FIRST_ORDER_ONLY;
+        if (c.usageLimit != null && usages(c.id, null, userId) >= c.usageLimit) return ErrorCode.COUPON_USAGE_LIMIT_REACHED;
+        if (c.usageLimitPerUser != null && usages(c.id, userId, userId) >= c.usageLimitPerUser) return ErrorCode.COUPON_USER_LIMIT_REACHED;
         return null;
     }
 
-    /** Usos reservados + confirmados (cupom inteiro ou de um usuário; anyCoupon = qualquer cupom do usuário). */
-    private long usages(Long couponId, Long userId, boolean anyCoupon) {
-        var sql = new StringBuilder("SELECT count(*) FROM coupon_usage WHERE status <> 'RELEASED'");
-        var params = new MapSqlParameterSource();
-        if (anyCoupon) sql.append(" AND status = 'CONFIRMED'");
-        else sql.append(" AND coupon_id = :coupon");
-        if (userId != null) sql.append(" AND user_id = :user");
-        params.addValue("coupon", couponId).addValue("user", userId);
+    private boolean hasPaidOrder(long userId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM orders WHERE user_id = :u AND paid_at IS NOT NULL)",
+                new MapSqlParameterSource("u", userId), Boolean.class));
+    }
+
+    /**
+     * Usos reservados + confirmados do cupom (de todos ou de um usuário). Não conta o pedido pendente de quem está
+     * comprando: o próximo checkout dele substitui esse pedido e devolve o uso.
+     */
+    private long usages(Long couponId, Long userId, Long buyerId) {
+        var sql = new StringBuilder("""
+                SELECT count(*) FROM coupon_usage cu
+                 WHERE cu.coupon_id = :coupon AND cu.status <> 'RELEASED'
+                   AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.id = cu.order_id AND o.user_id = :buyer AND o.status = 'PENDING_PAYMENT')
+                """);
+        if (userId != null) sql.append(" AND cu.user_id = :user");
+        var params = new MapSqlParameterSource("coupon", couponId).addValue("user", userId).addValue("buyer", buyerId);
         Long n = jdbc.queryForObject(sql.toString(), params, Long.class);
         return n == null ? 0 : n;
     }
@@ -104,7 +115,7 @@ public class CouponService {
             boolean ruleChanged = !code.equalsIgnoreCase(c.code) || req.type() != c.type || !Objects.equals(req.value(), c.value)
                     || !Objects.equals(req.maxDiscountAmount(), c.maxDiscountAmount)
                     || !Objects.equals(req.minOrderAmount(), c.minOrderAmount);
-            if (ruleChanged && usages(c.id, null, false) > 0) throw new BusinessException(ErrorCode.COUPON_IN_USE);
+            if (ruleChanged && usages(c.id, null, null) > 0) throw new BusinessException(ErrorCode.COUPON_IN_USE);
             if (!code.equalsIgnoreCase(c.code) && coupons.existsByCode(code)) throw new BusinessException(ErrorCode.COUPON_CODE_EXISTS);
             c.code = code;
         }
@@ -138,6 +149,6 @@ public class CouponService {
     private CouponResponse toResponse(Coupon c) {
         return new CouponResponse(c.id, c.code, c.description, c.type, c.value, c.maxDiscountAmount, c.maxShippingDiscount,
                 c.minOrderAmount, c.firstOrderOnly, c.excludeSaleItems, c.startsAt, c.endsAt, c.usageLimit,
-                c.usageLimitPerUser, c.active, c.categoryIds, c.productIds, usages(c.id, null, false));
+                c.usageLimitPerUser, c.active, c.categoryIds, c.productIds, usages(c.id, null, null));
     }
 }
