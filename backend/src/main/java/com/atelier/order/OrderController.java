@@ -13,6 +13,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
+import com.atelier.shared.web.PageResponse;
 import java.util.UUID;
 
 /**
@@ -38,6 +39,15 @@ class OrderController {
                 http.getHeader("User-Agent"));
         return ResponseEntity.status(placed.created() ? HttpStatus.CREATED : HttpStatus.OK)
                 .cacheControl(CacheControl.noStore()).body(placed.order());
+    }
+
+    /** "Meus pedidos". */
+    @GetMapping("/orders")
+    ResponseEntity<PageResponse<OrderService.OrderSummary>> list(@AuthenticationPrincipal Jwt jwt,
+                                                                 @RequestParam(defaultValue = "0") int page,
+                                                                 @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(orders.list(userId(jwt), Math.max(0, page), Math.clamp(size, 1, 50)));
     }
 
     @GetMapping("/orders/{number}")

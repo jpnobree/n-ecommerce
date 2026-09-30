@@ -11,6 +11,7 @@ import { apiErrorMessage } from '../../core/api-errors';
   template: `
     <div class="account">
       <nav class="account-nav" aria-label="Minha conta">
+        <a routerLink="pedidos" routerLinkActive="active">Pedidos</a>
         <a routerLink="dados" routerLinkActive="active">Meus dados</a>
         <a routerLink="enderecos" routerLinkActive="active">Endereços</a>
         <a routerLink="favoritos" routerLinkActive="active">Favoritos</a>

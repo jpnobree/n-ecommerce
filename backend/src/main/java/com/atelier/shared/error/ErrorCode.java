@@ -59,7 +59,8 @@ public enum ErrorCode {
 
     PAYMENT_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Pagamento indisponível no momento. Tente de novo em instantes"),
     INVALID_SIGNATURE(HttpStatus.BAD_REQUEST, "Assinatura inválida"),
-    REFUND_EXCEEDS_BALANCE(HttpStatus.UNPROCESSABLE_CONTENT, "Valor maior que o saldo reembolsável do pedido");
+    REFUND_EXCEEDS_BALANCE(HttpStatus.UNPROCESSABLE_CONTENT, "Valor maior que o saldo reembolsável do pedido"),
+    FULFILLMENT_BLOCKED(HttpStatus.CONFLICT, "Envio bloqueado: pagamento em revisão ou disputa aberta");
 
     public final HttpStatus status;
     public final String title;

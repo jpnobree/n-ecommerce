@@ -2,7 +2,8 @@ package com.atelier.order;
 
 import com.atelier.catalog.service.InventoryService;
 import com.atelier.catalog.service.ProductDenormalizer;
-import com.atelier.notification.Outbox;
+import com.atelier.order.OrderStateMachine.Actor;
+import com.atelier.order.OrderStateMachine.ActorType;
 import com.atelier.shared.error.BusinessException;
 import com.atelier.shared.error.ErrorCode;
 import com.stripe.exception.SignatureVerificationException;
@@ -45,10 +46,10 @@ class PaymentService {
     private record Ord(long id, String number, String status, long total, String email, UUID cartId, Long couponId) {}
 
     private final OrderService orders;
+    private final OrderStateMachine states;
     private final StripeGateway gateway;
     private final InventoryService inventory;
     private final ProductDenormalizer denormalizer;
-    private final Outbox outbox;
     private final NamedParameterJdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final JsonMapper json;
@@ -57,16 +58,16 @@ class PaymentService {
     private final String webhookSecret;
     private final boolean livemode;
 
-    PaymentService(OrderService orders, StripeGateway gateway, InventoryService inventory, ProductDenormalizer denormalizer,
-                   Outbox outbox, NamedParameterJdbcTemplate jdbc, TransactionTemplate tx, JsonMapper json, Clock clock,
+    PaymentService(OrderService orders, OrderStateMachine states, StripeGateway gateway, InventoryService inventory, ProductDenormalizer denormalizer,
+                   NamedParameterJdbcTemplate jdbc, TransactionTemplate tx, JsonMapper json, Clock clock,
                    @Value("${app.stripe.publishable-key:}") String publishableKey,
                    @Value("${app.stripe.webhook-secret:}") String webhookSecret,
                    @Value("${app.stripe.livemode:false}") boolean livemode) {
         this.orders = orders;
+        this.states = states;
         this.gateway = gateway;
         this.inventory = inventory;
         this.denormalizer = denormalizer;
-        this.outbox = outbox;
         this.jdbc = jdbc;
         this.tx = tx;
         this.json = json;
@@ -214,15 +215,12 @@ class PaymentService {
         return true;
     }
 
-    /** PAID: reserva vira baixa, cupom confirmado, itens saem da sacola, e-mail pela outbox. */
+    /** PAID: reserva vira baixa, cupom confirmado, itens saem da sacola; o e-mail sai pela máquina de estados. */
     private void markPaid(Ord o, boolean mismatch) {
         var params = new MapSqlParameterSource("id", o.id()).addValue("review", mismatch)
                 .addValue("cart", o.cartId()).addValue("coupon", o.couponId());
-        jdbc.update("""
-                UPDATE orders SET status = 'PAID', paid_at = now(), payment_review = :review, cancelled_at = NULL, cancel_reason = NULL,
-                                  version = version + 1, updated_at = now()
-                 WHERE id = :id
-                """, params);
+        states.move(o.id(), "PAID", Actor.STRIPE, o.status().equals("CANCELLED") ? "Pagamento após o cancelamento" : null);
+        jdbc.update("UPDATE orders SET payment_review = :review WHERE id = :id", params);
         inventory.commitSale(orders.itemQuantities(o.id()), o.id());
         jdbc.update("UPDATE coupon_usage SET status = 'CONFIRMED' WHERE order_id = :id", params);
         jdbc.update("""
@@ -234,9 +232,6 @@ class PaymentService {
         jdbc.update("DELETE FROM cart_item WHERE cart_id = :cart AND variant_id IN (SELECT variant_id FROM order_item WHERE order_id = :id)", params);
         if (o.couponId() != null) jdbc.update("UPDATE cart SET coupon_id = NULL WHERE id = :cart AND coupon_id = :coupon", params);
         if (mismatch) log.error("ALERTA: valor recebido diferente do total no pedido {}; marcado para revisão", o.number());
-        outbox.email("ORDER", o.id(), o.email(), "Pedido " + o.number() + " confirmado",
-                "Recebemos o pagamento do pedido " + o.number() + " (" + brl(o.total()) + ").\n"
-                        + "Avisaremos quando ele for enviado.");
     }
 
     /** Pago depois de cancelado (expirou): re-reserva; sem estoque, reembolso integral automático (PRD 9.3). */
@@ -263,10 +258,8 @@ class PaymentService {
         var params = new MapSqlParameterSource("id", p.id()).addValue("status", status).addValue("order", p.orderId());
         jdbc.update("UPDATE payment SET status = :status, updated_at = now() WHERE id = :id", params);
         if (status.equals("PROCESSING")) {
-            jdbc.update("""
-                    UPDATE orders SET status = 'PAYMENT_PROCESSING', version = version + 1, updated_at = now()
-                     WHERE id = :order AND status = 'PENDING_PAYMENT'
-                    """, params);
+            lockOrder(p.orderId());
+            states.move(p.orderId(), "PAYMENT_PROCESSING", Actor.STRIPE, null);
         }
         return true;
     }
@@ -284,10 +277,8 @@ class PaymentService {
                 UPDATE payment SET status = 'REQUIRES_PAYMENT_METHOD', failure_code = :code, failure_message = :message,
                                    updated_at = now() WHERE id = :id
                 """, params);
-        jdbc.update("""
-                UPDATE orders SET status = 'PENDING_PAYMENT', version = version + 1, updated_at = now()
-                 WHERE id = :order AND status = 'PAYMENT_PROCESSING'
-                """, params);
+        lockOrder(p.orderId());
+        states.move(p.orderId(), "PENDING_PAYMENT", Actor.STRIPE, code); // só a partir de PAYMENT_PROCESSING
         return true;
     }
 
@@ -296,8 +287,7 @@ class PaymentService {
         if (p == null) return false;
         if (p.status().equals("SUCCEEDED")) return true;
         jdbc.update("UPDATE payment SET status = 'CANCELED', updated_at = now() WHERE id = :id", new MapSqlParameterSource("id", p.id()));
-        lockOrder(p.orderId());
-        orders.cancelLocked(p.orderId(), "PAYMENT_CANCELED");
+        orders.cancelLocked(p.orderId(), "PAYMENT_CANCELED", Actor.STRIPE);
         return true;
     }
 
@@ -367,10 +357,10 @@ class PaymentService {
         var params = new MapSqlParameterSource("sid", refund.path("id").asString())
                 .addValue("meta", metaId == null ? null : Long.parseLong(metaId));
         var row = jdbc.query("""
-                SELECT id, status, order_id, payment_id, amount, items::text, restock, cancel_order FROM refund
+                SELECT id, status, order_id, payment_id, amount, items::text, restock, cancel_order, requested_by FROM refund
                  WHERE stripe_refund_id = :sid OR id = :meta FOR UPDATE
                 """, params, (rs, n) -> new Object[]{rs.getLong(1), rs.getString(2), rs.getLong(3), rs.getLong(4), rs.getLong(5),
-                rs.getString(6), rs.getBoolean(7), rs.getBoolean(8)}).stream().findFirst().orElse(null);
+                rs.getString(6), rs.getBoolean(7), rs.getBoolean(8), rs.getObject(9)}).stream().findFirst().orElse(null);
         if (row == null) return false; // ponytail: reembolso feito direto no Dashboard da Stripe não é importado
         long id = (long) row[0];
         String previous = (String) row[1];
@@ -384,14 +374,15 @@ class PaymentService {
                 """, params.addValue("id", id).addValue("status", previous.equals("SUCCEEDED") ? previous : next)
                 .addValue("failure", refund.path("failure_reason").asString(null)));
         if (previous.equals("PENDING") && next.equals("SUCCEEDED")) {
-            applyRefund(id, (long) row[2], (long) row[3], (long) row[4], json.readTree((String) row[5]), (boolean) row[6], (boolean) row[7]);
+            applyRefund(id, (long) row[2], (long) row[3], (long) row[4], json.readTree((String) row[5]), (boolean) row[6], (boolean) row[7], (Long) row[8]);
         } else if (previous.equals("PENDING") && next.equals("FAILED")) {
             log.error("ALERTA: reembolso {} falhou na Stripe ({})", id, refund.path("failure_reason").asString(""));
         }
         return true;
     }
 
-    private void applyRefund(long refundId, long orderId, long paymentId, long amount, JsonNode items, boolean restock, boolean cancel) {
+    private void applyRefund(long refundId, long orderId, long paymentId, long amount, JsonNode items, boolean restock, boolean cancel,
+                             Long requestedBy) {
         var params = new MapSqlParameterSource("payment", paymentId).addValue("amount", amount).addValue("order", orderId);
         jdbc.update("UPDATE payment SET amount_refunded = amount_refunded + :amount, updated_at = now() WHERE id = :payment", params);
         Map<Long, Integer> back = new HashMap<>();
@@ -406,20 +397,14 @@ class PaymentService {
             inventory.restock(back, refundId);
             denormalizer.recompute(orders.productIds(orderId));
         }
-        Ord o = lockOrder(orderId);
-        if (o.status().equals("CANCELLED")) return; // reembolso automático de pedido já cancelado
-        if (cancel) {
-            jdbc.update("""
-                    UPDATE orders SET status = 'CANCELLED', cancelled_at = now(), cancel_reason = 'ADMIN_REFUND',
-                                      version = version + 1, updated_at = now() WHERE id = :order
-                    """, params);
-            return;
-        }
-        jdbc.update("""
-                UPDATE orders o SET status = CASE WHEN p.amount_refunded >= p.amount_received THEN 'REFUNDED' ELSE 'PARTIALLY_REFUNDED' END,
-                                    version = o.version + 1, updated_at = now()
-                  FROM payment p WHERE p.id = :payment AND o.id = :order
-                """, params);
+        lockOrder(orderId); // pedido já cancelado (reembolso automático): a máquina de estados recusa e nada muda
+        boolean full = jdbc.queryForObject("SELECT amount_refunded >= amount_received FROM payment WHERE id = :payment", params, Boolean.class);
+        boolean shipped = jdbc.queryForObject("SELECT fulfillment_status IN ('SHIPPED', 'DELIVERED') FROM orders WHERE id = :order",
+                params, Boolean.class);
+        // Tudo devolvido antes do envio = pedido cancelado; depois do envio = reembolsado (PRD 10.7)
+        String to = cancel || (full && !shipped) ? "CANCELLED" : full ? "REFUNDED" : "PARTIALLY_REFUNDED";
+        Actor actor = requestedBy == null ? Actor.SYSTEM : new Actor(ActorType.ADMIN, requestedBy);
+        states.move(orderId, to, actor, to.equals("CANCELLED") ? "ADMIN_REFUND" : "Reembolso " + refundId);
     }
 
     // ---- disputas ----
@@ -481,7 +466,7 @@ class PaymentService {
         } catch (com.stripe.exception.StripeException e) {
             throw new BusinessException(ErrorCode.PAYMENT_UNAVAILABLE);
         }
-        return list(null, paymentId).getFirst();
+        return list(null, paymentId, null).getFirst();
     }
 
     private void syncIntent(String intentId) throws com.stripe.exception.StripeException {
@@ -501,23 +486,20 @@ class PaymentService {
         after.forEach(Runnable::run);
     }
 
-    List<PaymentRow> list(String status, Long paymentId) {
+    List<PaymentRow> list(String status, Long paymentId, Long orderId) {
         return jdbc.query("""
                 SELECT p.id, o.order_number, p.stripe_payment_intent_id, p.status, p.amount, p.amount_received, p.amount_refunded,
                        p.payment_method_type, p.card_brand, p.card_last4, p.failure_code, p.created_at
                   FROM payment p JOIN orders o ON o.id = p.order_id
                  WHERE (CAST(:status AS varchar) IS NULL OR p.status = :status) AND (CAST(:id AS bigint) IS NULL OR p.id = :id)
+                   AND (CAST(:order AS bigint) IS NULL OR p.order_id = :order)
                  ORDER BY p.id DESC LIMIT 100
-                """, new MapSqlParameterSource("status", status).addValue("id", paymentId), (rs, n) -> new PaymentRow(rs.getLong(1),
+                """, new MapSqlParameterSource("status", status).addValue("id", paymentId).addValue("order", orderId), (rs, n) -> new PaymentRow(rs.getLong(1),
                 rs.getString(2), rs.getString(3), rs.getString(4), rs.getLong(5), rs.getLong(6), rs.getLong(7), rs.getString(8),
                 rs.getString(9), rs.getString(10), rs.getString(11), rs.getTimestamp(12).toInstant()));
     }
 
     private static String truncate(String s, int max) {
         return s == null || s.length() <= max ? s : s.substring(0, max);
-    }
-
-    private static String brl(long cents) {
-        return "R$ " + String.format(Locale.of("pt", "BR"), "%,.2f", cents / 100.0);
     }
 }

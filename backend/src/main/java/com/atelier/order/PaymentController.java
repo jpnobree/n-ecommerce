@@ -45,7 +45,7 @@ class PaymentController {
     @GetMapping("/admin/payments")
     @PreAuthorize("hasRole('ADMIN')")
     List<PaymentRow> list(@RequestParam(required = false) String status) {
-        return payments.list(status, null);
+        return payments.list(status, null, null);
     }
 
     @PostMapping("/admin/payments/{id}/sync")

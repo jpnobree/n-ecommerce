@@ -22,19 +22,36 @@ interface Order {
   couponCode: string | null;
   shippingAddress: { recipientName: string; street: string; number: string; complement: string | null; district: string; city: string; state: string; postalCode: string };
   shippingMethod: { service: string; days: number };
+  fulfillmentStatus: string;
+  carrier: string | null;
+  trackingCode: string | null;
+  timeline: { kind: string; status: string; at: string }[];
 }
 
 const STATUS: Record<string, string> = {
   PENDING_PAYMENT: 'Aguardando pagamento',
   PAYMENT_PROCESSING: 'Processando pagamento',
   PAID: 'Pago',
+  PROCESSING: 'Em separação',
+  SHIPPED: 'Enviado',
+  DELIVERED: 'Entregue',
   CANCELLED: 'Cancelado',
+  REFUNDED: 'Reembolsado',
+  PARTIALLY_REFUNDED: 'Reembolsado parcialmente',
 };
+
+/** Rótulo do status (financeiro ou de envio) para o cliente. */
+export function orderStatusLabel(status: string): string {
+  return STATUS[status] ?? status;
+}
 
 const CANCEL_REASON: Record<string, string> = {
   PAYMENT_TIMEOUT: 'o prazo para pagamento terminou',
   CUSTOMER: 'você cancelou',
   REPLACED: 'um pedido mais recente da mesma sacola o substituiu',
+  ADMIN: 'a loja cancelou',
+  ADMIN_REFUND: 'a loja cancelou e devolveu o valor',
+  PAYMENT_CANCELED: 'o pagamento foi cancelado',
 };
 
 @Component({
@@ -62,6 +79,19 @@ const CANCEL_REASON: Record<string, string> = {
         <p>Pagamento aprovado. Enviamos a confirmação para o seu e-mail.</p>
       } @else if (o.status === 'CANCELLED' && o.cancelReason) {
         <p>Cancelado porque {{ cancelReason(o.cancelReason) }}.</p>
+      }
+      @if (o.fulfillmentStatus !== 'UNFULFILLED' && o.status !== o.fulfillmentStatus) {
+        <p>Envio: <strong>{{ statusLabel(o.fulfillmentStatus) }}</strong></p>
+      }
+      @if (o.trackingCode) {
+        <p>Rastreio ({{ o.carrier }}): <strong>{{ o.trackingCode }}</strong></p>
+      }
+      @if (o.timeline.length > 1) {
+        <ol class="timeline" aria-label="Andamento do pedido">
+          @for (t of o.timeline; track $index) {
+            <li><span>{{ statusLabel(t.status) }}</span> <time [attr.datetime]="t.at">{{ t.at | date: 'dd/MM HH:mm' }}</time></li>
+          }
+        </ol>
       }
 
       <div class="cart">
@@ -134,7 +164,7 @@ export class OrderConfirmation implements OnInit, OnDestroy {
   }
 
   protected statusLabel(status: string): string {
-    return STATUS[status] ?? status;
+    return orderStatusLabel(status);
   }
 
   protected cancelReason(reason: string): string {

@@ -11,6 +11,9 @@ import com.atelier.identity.repository.AddressRepository;
 import com.atelier.identity.service.Tokens;
 import com.atelier.shared.error.BusinessException;
 import com.atelier.shared.error.ErrorCode;
+import com.atelier.shared.web.PageResponse;
+import com.atelier.order.OrderStateMachine.Actor;
+import com.atelier.order.OrderStateMachine.ActorType;
 import com.stripe.exception.StripeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,9 +54,17 @@ public class OrderService {
     public record OrderItemView(String productSlug, String productName, String sku, String color, String size, String imageUrl,
                                 long unitPrice, long listPrice, int quantity, long discount, long lineTotal) {}
 
-    public record OrderView(String orderNumber, String status, Instant placedAt, Instant expiresAt, Instant cancelledAt,
-                            String cancelReason, List<OrderItemView> items, long subtotal, long discount, long shipping,
-                            long shippingDiscount, long total, String couponCode, JsonNode shippingAddress, JsonNode shippingMethod) {}
+    /** Linha do tempo para o cliente: o que mudou e quando (sem ator nem motivo internos). */
+    public record TimelineEntry(String kind, String status, Instant at) {}
+
+    public record OrderView(String orderNumber, String status, String fulfillmentStatus, Instant placedAt, Instant expiresAt,
+                            Instant cancelledAt, String cancelReason, List<OrderItemView> items, long subtotal, long discount,
+                            long shipping, long shippingDiscount, long total, String couponCode, JsonNode shippingAddress,
+                            JsonNode shippingMethod, String carrier, String trackingCode, Instant shippedAt, Instant deliveredAt,
+                            List<TimelineEntry> timeline, long version) {}
+
+    public record OrderSummary(String orderNumber, String status, String fulfillmentStatus, Instant placedAt, long total,
+                               int itemCount, String imageUrl) {}
 
     private final CartService carts;
     private final CouponService coupons;
@@ -64,12 +75,14 @@ public class OrderService {
     private final TransactionTemplate tx;
     private final JsonMapper json;
     private final StripeGateway gateway;
+    private final OrderStateMachine states;
     private final Clock clock;
 
     OrderService(CartService carts, CouponService coupons, InventoryService inventory, ProductDenormalizer denormalizer,
                  AddressRepository addresses, NamedParameterJdbcTemplate jdbc, TransactionTemplate tx, JsonMapper json,
-                 StripeGateway gateway, Clock clock) {
+                 StripeGateway gateway, OrderStateMachine states, Clock clock) {
         this.gateway = gateway;
+        this.states = states;
         this.carts = carts;
         this.coupons = coupons;
         this.inventory = inventory;
@@ -129,7 +142,7 @@ public class OrderService {
             if ((int) pending.get()[1] == quote.cartVersion() && hash.equals(pending.get()[2])) {
                 return new Placed(false, response(pendingId)); // nova aba / outra chave com o mesmo carrinho
             }
-            cancelLocked(pendingId, "REPLACED"); // cliente mudou a sacola ou o endereço: o pedido novo substitui
+            cancelLocked(pendingId, "REPLACED", new Actor(ActorType.CUSTOMER, userId)); // cliente mudou a sacola ou o endereço: o pedido novo substitui
             replaced[0] = pendingId;
         }
 
@@ -185,6 +198,7 @@ public class OrderService {
                 .addValue("unit", l.unitPrice()).addValue("list", l.listPrice()).addValue("qty", l.quantity())
                 .addValue("discount", l.discount()).addValue("total", l.unitPrice() * l.quantity() - l.discount())
                 .addValue("weight", l.weightGrams())).toArray(MapSqlParameterSource[]::new));
+        states.history(orderId, "STATUS", null, "PENDING_PAYMENT", new Actor(ActorType.CUSTOMER, userId), null);
 
         List<Long> missing = inventory.reserve(quote.lines().stream()
                 .collect(Collectors.toMap(QuoteLine::variantId, QuoteLine::quantity)), orderId);
@@ -250,19 +264,49 @@ public class OrderService {
     // ---- consulta e cancelamento ----
 
     public OrderView get(long userId, String number) {
-        var params = new MapSqlParameterSource("user", userId).addValue("number", number);
-        OrderView order = jdbc.query("""
-                SELECT id, order_number, status, placed_at, expires_at, cancelled_at, cancel_reason, subtotal, discount_total,
-                       shipping_total, shipping_discount, total, coupon_code, shipping_address::text, shipping_method::text
-                  FROM orders WHERE order_number = :number AND user_id = :user
-                """, params, (rs, n) -> new OrderView(rs.getString(2), rs.getString(3), rs.getTimestamp(4).toInstant(),
-                rs.getTimestamp(5).toInstant(), rs.getTimestamp(6) == null ? null : rs.getTimestamp(6).toInstant(),
-                rs.getString(7), items(rs.getLong(1)), rs.getLong(8), rs.getLong(9), rs.getLong(10), rs.getLong(11),
-                rs.getLong(12), rs.getString(13), json.readTree(rs.getString(14)), json.readTree(rs.getString(15))))
-                .stream().findFirst().orElse(null);
         // Pedido de outro cliente é "não encontrado", não "proibido" (não revela que existe)
-        if (order == null) throw new BusinessException(ErrorCode.NOT_FOUND, "Pedido não encontrado");
-        return order;
+        long id = jdbc.queryForList("SELECT id FROM orders WHERE order_number = :number AND user_id = :user",
+                        new MapSqlParameterSource("user", userId).addValue("number", number), Long.class)
+                .stream().findFirst().orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Pedido não encontrado"));
+        return view(id);
+    }
+
+    /** "Meus pedidos": mais recentes primeiro. */
+    public PageResponse<OrderSummary> list(long userId, int page, int size) {
+        var params = new MapSqlParameterSource("user", userId).addValue("limit", size).addValue("offset", (long) page * size);
+        List<OrderSummary> content = jdbc.query("""
+                SELECT o.order_number, o.status, o.fulfillment_status, o.placed_at, o.total,
+                       (SELECT sum(quantity) FROM order_item WHERE order_id = o.id),
+                       (SELECT image_url FROM order_item WHERE order_id = o.id ORDER BY id LIMIT 1)
+                  FROM orders o WHERE o.user_id = :user
+                 ORDER BY o.placed_at DESC, o.id DESC LIMIT :limit OFFSET :offset
+                """, params, (rs, n) -> new OrderSummary(rs.getString(1), rs.getString(2), rs.getString(3),
+                rs.getTimestamp(4).toInstant(), rs.getLong(5), rs.getInt(6), rs.getString(7)));
+        long total = jdbc.queryForObject("SELECT count(*) FROM orders WHERE user_id = :user", params, Long.class);
+        return new PageResponse<>(content, page, size, total, (int) ((total + size - 1) / size));
+    }
+
+    OrderView view(long orderId) {
+        return jdbc.queryForObject("""
+                SELECT id, order_number, status, fulfillment_status, placed_at, expires_at, cancelled_at, cancel_reason, subtotal,
+                       discount_total, shipping_total, shipping_discount, total, coupon_code, shipping_address::text,
+                       shipping_method::text, carrier, tracking_code, shipped_at, delivered_at, version
+                  FROM orders WHERE id = :id
+                """, new MapSqlParameterSource("id", orderId), (rs, n) -> new OrderView(rs.getString(2), rs.getString(3),
+                rs.getString(4), instant(rs.getTimestamp(5)), instant(rs.getTimestamp(6)), instant(rs.getTimestamp(7)),
+                rs.getString(8), items(orderId), rs.getLong(9), rs.getLong(10), rs.getLong(11), rs.getLong(12), rs.getLong(13),
+                rs.getString(14), json.readTree(rs.getString(15)), json.readTree(rs.getString(16)), rs.getString(17),
+                rs.getString(18), instant(rs.getTimestamp(19)), instant(rs.getTimestamp(20)), timeline(orderId), rs.getLong(21)));
+    }
+
+    private List<TimelineEntry> timeline(long orderId) {
+        return jdbc.query("SELECT kind, to_status, created_at FROM order_status_history WHERE order_id = :id ORDER BY id",
+                new MapSqlParameterSource("id", orderId), (rs, n) -> new TimelineEntry(rs.getString(1), rs.getString(2),
+                        rs.getTimestamp(3).toInstant()));
+    }
+
+    private static Instant instant(Timestamp ts) {
+        return ts == null ? null : ts.toInstant();
     }
 
     private List<OrderItemView> items(long orderId) {
@@ -285,7 +329,9 @@ public class OrderService {
         }
         tx.executeWithoutResult(s -> {
             jdbc.queryForObject("SELECT id FROM orders WHERE id = :id FOR UPDATE", new MapSqlParameterSource("id", id), Long.class);
-            if (!cancelLocked(id, "CUSTOMER")) throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION);
+            if (!cancelLocked(id, "CUSTOMER", new Actor(ActorType.CUSTOMER, userId))) {
+                throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION);
+            }
         });
         return get(userId, number);
     }
@@ -312,7 +358,7 @@ public class OrderService {
             Boolean done = tx.execute(s -> jdbc.queryForList("""
                     SELECT id FROM orders WHERE id = :id AND status = 'PENDING_PAYMENT' AND expires_at < :now FOR UPDATE SKIP LOCKED
                     """, new MapSqlParameterSource("id", id).addValue("now", now.getValue("now")), Long.class)
-                    .stream().anyMatch(x -> cancelLocked(x, "PAYMENT_TIMEOUT")));
+                    .stream().anyMatch(x -> cancelLocked(x, "PAYMENT_TIMEOUT", Actor.SYSTEM)));
             if (Boolean.TRUE.equals(done)) expired++;
         }
         if (expired > 0) log.info("{} pedido(s) expirado(s) por falta de pagamento", expired);
@@ -342,14 +388,14 @@ public class OrderService {
         return true;
     }
 
-    /** Sai de PENDING_PAYMENT ou PAYMENT_PROCESSING (idempotente): devolve reserva e uso do cupom. */
-    boolean cancelLocked(long orderId, String reason) {
-        int changed = jdbc.update("""
-                UPDATE orders SET status = 'CANCELLED', cancelled_at = now(), cancel_reason = :reason,
-                                  version = version + 1, updated_at = now()
-                 WHERE id = :id AND status IN ('PENDING_PAYMENT', 'PAYMENT_PROCESSING')
-                """, new MapSqlParameterSource("id", orderId).addValue("reason", reason));
-        if (changed == 0) return false;
+    /**
+     * Cancela pedido ainda não pago (idempotente): devolve reserva e uso do cupom. Pedido pago se cancela com
+     * reembolso ({@link RefundService}). Quem chama já travou a linha do pedido.
+     */
+    boolean cancelLocked(long orderId, String reason, Actor actor) {
+        String status = jdbc.queryForObject("SELECT status FROM orders WHERE id = :id FOR UPDATE", new MapSqlParameterSource("id", orderId), String.class);
+        if (!status.equals("PENDING_PAYMENT") && !status.equals("PAYMENT_PROCESSING")) return false;
+        states.move(orderId, "CANCELLED", actor, reason);
         inventory.release(itemQuantities(orderId), orderId);
         jdbc.update("UPDATE coupon_usage SET status = 'RELEASED' WHERE order_id = :id AND status = 'RESERVED'",
                 new MapSqlParameterSource("id", orderId));

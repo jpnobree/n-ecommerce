@@ -49,14 +49,14 @@ class RefundService {
                     new MapSqlParameterSource("key", key), Long.class);
             if (!existing.isEmpty()) return existing.getFirst();
 
-            var order = jdbc.query("SELECT id, status FROM orders WHERE order_number = :n FOR UPDATE",
-                            new MapSqlParameterSource("n", orderNumber), (rs, n) -> new Object[]{rs.getLong(1), rs.getString(2)})
+            var order = jdbc.query("SELECT id, status, fulfillment_status FROM orders WHERE order_number = :n FOR UPDATE",
+                            new MapSqlParameterSource("n", orderNumber), (rs, n) -> new Object[]{rs.getLong(1), rs.getString(2), rs.getString(3)})
                     .stream().findFirst().orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Pedido não encontrado"));
             long orderId = (long) order[0];
             String status = (String) order[1];
             boolean cancel = Boolean.TRUE.equals(req.cancelOrder());
             if (!REFUNDABLE.contains(status)) throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION, "Pedido sem pagamento a reembolsar");
-            if (cancel && !(status.equals("PAID") || status.equals("PROCESSING"))) {
+            if (cancel && !(order[2].equals("UNFULFILLED") || order[2].equals("PROCESSING"))) {
                 throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION, "Pedido já enviado: use reembolso por itens");
             }
             var params = new MapSqlParameterSource("order", orderId);

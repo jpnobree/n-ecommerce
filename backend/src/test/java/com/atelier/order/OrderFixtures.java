@@ -6,8 +6,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
+import tools.jackson.databind.JsonNode;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /** Produto com estoque, cliente com endereço e sacola, checkout: base dos testes de pedido e pagamento. */
 abstract class OrderFixtures extends CatalogFixtures {
@@ -91,6 +101,90 @@ abstract class OrderFixtures extends CatalogFixtures {
             for (var f : futures) results.add(f.get(60, TimeUnit.SECONDS));
             return results;
         }
+    }
+
+
+    // ---- pagamento (Stripe simulada) ----
+
+    static final String SECRET = "whsec_test_segredo";
+
+    /** Pedido com o id e o intent que a "Stripe" criou para ele. */
+    protected record Order(Buyer buyer, long id, String number, long total, String intent) {}
+
+    @BeforeEach
+    protected void stripeUp() throws Exception {
+        reset(stripe);
+        when(stripe.enabled()).thenReturn(true);
+        when(stripe.createIntent(anyLong(), anyInt(), anyString(), anyLong(), anyString()))
+                .thenAnswer(i -> new StripeGateway.Intent("pi_" + i.getArgument(0) + "_" + i.getArgument(1),
+                        "secret_" + i.getArgument(0), "requires_payment_method"));
+        when(stripe.cancelIntent(anyString())).thenReturn("canceled");
+        // Reembolso aceito na hora, com o refund_id no metadata como a Stripe devolve
+        when(stripe.createRefund(anyString(), anyLong(), anyLong())).thenAnswer(i -> node(Map.of(
+                "id", "re_" + i.getArgument(2), "object", "refund", "amount", i.getArgument(1), "status", "succeeded",
+                "payment_intent", i.getArgument(0), "metadata", Map.of("refund_id", String.valueOf((long) i.getArgument(2))))));
+    }
+
+    // ---- helpers ----
+
+    protected JsonNode node(Object value) {
+        return json.readTree(json.writeValueAsString(value));
+    }
+
+    protected Order order(Buyer b, long variant, int qty) {
+        add(b, variant, qty);
+        var placed = checkout(b);
+        assertThat(placed.status()).as(placed.body()).isEqualTo(201);
+        var intent = ok(post("/api/orders/" + placed.text("orderNumber") + "/payment-intent").bearer(b.token()).send());
+        long id = placed.json().path("orderId").asLong();
+        return new Order(b, id, placed.text("orderNumber"), placed.json().path("total").asLong(), "pi_" + id + "_1");
+    }
+
+    protected Map<String, Object> intent(Order o, String status, long received) {
+        return Map.of("id", o.intent(), "object", "payment_intent", "status", status, "amount", o.total(),
+                "amount_received", received, "currency", "brl", "metadata", Map.of("order_id", String.valueOf(o.id())));
+    }
+
+    protected String event(String id, String type, Map<String, Object> object) {
+        return json.writeValueAsString(Map.of("id", id, "object", "event", "type", type, "livemode", false,
+                "data", Map.of("object", object)));
+    }
+
+    protected Res webhook(String payload, long timestamp, String secret) {
+        try {
+            var mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            String sig = HexFormat.of().formatHex(mac.doFinal((timestamp + "." + payload).getBytes(StandardCharsets.UTF_8)));
+            return post("/api/payments/webhook").header("Stripe-Signature", "t=" + timestamp + ",v1=" + sig).body(payload).send();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    protected Res webhook(String payload) {
+        return webhook(payload, Instant.now().getEpochSecond(), SECRET);
+    }
+
+    protected void paid(Order o) {
+        assertThat(webhook(event("evt_ok_" + o.id(), "payment_intent.succeeded", intent(o, "succeeded", o.total()))).status()).isEqualTo(200);
+        assertThat(status(o)).isEqualTo("PAID");
+    }
+
+    protected String status(Order o) {
+        return ok(get("/api/orders/" + o.number()).bearer(o.buyer().token()).send()).path("status").asString();
+    }
+
+    protected int onHand(long variant) {
+        return jdbc.queryForObject("SELECT on_hand FROM inventory WHERE variant_id = :v", new MapSqlParameterSource("v", variant), Integer.class);
+    }
+
+    protected Object column(String sql, Order o) {
+        return jdbc.queryForObject(sql, new MapSqlParameterSource("id", o.id()), Object.class);
+    }
+
+    protected Res refund(Order o, Map<String, Object> body) {
+        return post("/api/admin/orders/" + o.number() + "/refunds").bearer(admin)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).body(body).send();
     }
 
 }

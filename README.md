@@ -53,9 +53,13 @@ docker run --rm -v "$PWD/backend:/src" -v atelier-m2:/root/.m2 -v /var/run/docke
 | `GET /api/categories`, `/api/categories/page?path=`, `/api/collections` | árvore de categorias, página de categoria, coleções |
 | `/api/cart`, `/api/cart/items`, `/coupon`, `/shipping`, `/merge` | sacola de convidado (header `X-Cart-Token`) ou da conta (Bearer); frete por tabela CEP × peso, grátis acima de `APP_CART_FREE_SHIPPING_ABOVE` centavos (padrão 29900) |
 | `POST /api/checkout` | cria o pedido (`PENDING_PAYMENT`) e reserva o estoque por 30 min; corpo `{addressId, shippingOption}` + header obrigatório `Idempotency-Key` (UUID). Valores sempre recalculados no servidor |
+| `GET /api/orders` | "Meus pedidos" (paginado, mais recentes primeiro) |
 | `GET /api/orders/{número}`, `POST /api/orders/{número}/cancel` | pedido do cliente (snapshot) e cancelamento antes do pagamento (cancela o PaymentIntent); pedidos não pagos expiram sozinhos |
 | `POST /api/orders/{número}/payment-intent` | `clientSecret` + chave publicável para o Payment Element (cria o PaymentIntent na primeira chamada) |
 | `POST /api/payments/webhook` | eventos da Stripe (assinatura obrigatória); idempotente por `event.id` |
+| `/api/admin/orders`, `/orders/{número}` | busca (`q` = número, e-mail, nome, CPF ou SKU; filtros `status`, `fulfillment`, `from`, `to`, `hasDispute`) e detalhe com pagamentos, reembolsos, histórico e notas (OPERATOR e ADMIN) |
+| `POST /api/admin/orders/{número}/transitions` | envio: `PROCESSING` → `SHIPPED` (exige `carrier` e `trackingCode`) → `DELIVERED`; manda a `version` lida (conflito = 409) |
+| `POST /api/admin/orders/{número}/notes`, `/resend-confirmation`, `/cancel` | nota interna, reenvio do e-mail de confirmação, cancelamento (ADMIN; pago e não enviado = reembolso integral) |
 | `/api/admin/payments`, `/payments/{id}/sync`, `/orders/{número}/refunds` | pagamentos, reconciliação manual e reembolsos (ADMIN; reembolso exige `Idempotency-Key`) |
 | `/api/me/wishlist` | favoritos |
 | `/api/admin/coupons` | cupons (ADMIN) |
