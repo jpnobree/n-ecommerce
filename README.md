@@ -53,13 +53,32 @@ docker run --rm -v "$PWD/backend:/src" -v atelier-m2:/root/.m2 -v /var/run/docke
 | `GET /api/categories`, `/api/categories/page?path=`, `/api/collections` | árvore de categorias, página de categoria, coleções |
 | `/api/cart`, `/api/cart/items`, `/coupon`, `/shipping`, `/merge` | sacola de convidado (header `X-Cart-Token`) ou da conta (Bearer); frete por tabela CEP × peso, grátis acima de `APP_CART_FREE_SHIPPING_ABOVE` centavos (padrão 29900) |
 | `POST /api/checkout` | cria o pedido (`PENDING_PAYMENT`) e reserva o estoque por 30 min; corpo `{addressId, shippingOption}` + header obrigatório `Idempotency-Key` (UUID). Valores sempre recalculados no servidor |
-| `GET /api/orders/{número}`, `POST /api/orders/{número}/cancel` | pedido do cliente (snapshot) e cancelamento antes do pagamento; pedidos não pagos expiram sozinhos |
+| `GET /api/orders/{número}`, `POST /api/orders/{número}/cancel` | pedido do cliente (snapshot) e cancelamento antes do pagamento (cancela o PaymentIntent); pedidos não pagos expiram sozinhos |
+| `POST /api/orders/{número}/payment-intent` | `clientSecret` + chave publicável para o Payment Element (cria o PaymentIntent na primeira chamada) |
+| `POST /api/payments/webhook` | eventos da Stripe (assinatura obrigatória); idempotente por `event.id` |
+| `/api/admin/payments`, `/payments/{id}/sync`, `/orders/{número}/refunds` | pagamentos, reconciliação manual e reembolsos (ADMIN; reembolso exige `Idempotency-Key`) |
 | `/api/me/wishlist` | favoritos |
 | `/api/admin/coupons` | cupons (ADMIN) |
 | `/api/admin/categories`, `/collections`, `/colors`, `/sizes`, `/products` | cadastro do catálogo (escrita: ADMIN; leitura e estoque: ADMIN e OPERATOR) |
 | `/actuator/health/liveness`, `/readiness` | probes (porta 8081 em hml/prod) |
 | `/actuator/prometheus` | métricas (porta 8081 em hml/prod) |
 | `/swagger-ui.html` | documentação OpenAPI (desligada em hml/prod) |
+
+## Pagamentos (Stripe) em dev
+
+1. Crie `.env` na raiz (já está no `.gitignore`) com as chaves de **teste** da sua conta Stripe:
+   `STRIPE_SECRET_KEY=sk_test_...` e `STRIPE_PUBLISHABLE_KEY=pk_test_...`.
+2. Encaminhe os webhooks para a API com a [Stripe CLI](https://docs.stripe.com/stripe-cli):
+
+```bash
+stripe listen --forward-to localhost:8080/api/payments/webhook
+```
+
+3. Copie o `whsec_...` que ela mostra para `STRIPE_WEBHOOK_SECRET` no `.env` e rode `docker compose up -d api`.
+
+Cartões de teste: `4242 4242 4242 4242` (aprovado), `4000 0000 0000 0002` (recusado), `4000 0027 6000 3184` (3DS).
+O pedido só vira PAID pelo webhook; se ele se perder, a reconciliação (a cada 15 min) consulta a Stripe e corrige.
+Pix aparece no Payment Element quando está ativado na conta Stripe (Brasil).
 
 ## Autenticação (resumo)
 
@@ -82,6 +101,9 @@ actuator na 8081, IP do cliente lido de `X-Forwarded-For` (o load balancer deve 
 | `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` | API | SMTP (padrão: Mailpit em localhost:1025) |
 | `APP_MAIL_FROM` | API | remetente dos e-mails |
 | `APP_FRONTEND_URL` | API | base dos links enviados por e-mail |
+| `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY` | API | chaves da Stripe (secreta só no backend; vazia = pagamento indisponível) |
+| `STRIPE_WEBHOOK_SECRET` | API | segredo `whsec_...` do endpoint de webhook |
+| `STRIPE_LIVEMODE` | API | `true` só em produção (eventos de outro modo são ignorados) |
 | `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` | API | cria o primeiro ADMIN se não houver nenhum (senha com 12+ caracteres) |
 | `APP_VERSION` | API | versão exibida em `/api/status` (usar o SHA do commit) |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | API | Sentry; vazio = desligado |

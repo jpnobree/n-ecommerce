@@ -43,6 +43,8 @@ public class SecurityConfig {
                                 "/api/collections/**", "/api/products", "/api/products/**", "/api/search/**", "/api/home",
                                 "/api/seo/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/newsletter").permitAll()
+                        // Stripe: autenticado pela assinatura do corpo, não por JWT
+                        .requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll()
                         // Carrinho de convidado (X-Cart-Token); com Bearer, vira o carrinho da conta. Merge exige login.
                         .requestMatchers("/api/cart/merge").authenticated()
                         .requestMatchers("/api/cart", "/api/cart/**").permitAll()

@@ -48,6 +48,10 @@ services:
       SPRING_PROFILES_ACTIVE: seed
       BOOTSTRAP_ADMIN_EMAIL: admin@atelier.local
       BOOTSTRAP_ADMIN_PASSWORD: admin-dev-123456
+      # Chaves de TESTE da Stripe vêm do arquivo .env na raiz (fora do git); sem elas o pagamento fica indisponível
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - "8080:8080"
     depends_on:

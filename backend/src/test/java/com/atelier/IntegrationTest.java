@@ -1,5 +1,6 @@
 package com.atelier;
 
+import com.atelier.order.StripeGateway;
 import com.atelier.shared.web.RateLimitFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,7 +36,9 @@ import static org.mockito.Mockito.*;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "app.auth.refresh-reuse-grace=2s",
         "app.auth.bootstrap-admin-email=admin@test.local",
-        "app.auth.bootstrap-admin-password=admin-test-123456"
+        "app.auth.bootstrap-admin-password=admin-test-123456",
+        "app.stripe.webhook-secret=whsec_test_segredo",
+        "app.stripe.publishable-key=pk_test_atelier"
 })
 @Import(IntegrationTest.Containers.class)
 public abstract class IntegrationTest {
@@ -72,6 +75,10 @@ public abstract class IntegrationTest {
 
     @MockitoBean
     protected JavaMailSender mailSender;
+
+    /** Stripe nunca é chamada de verdade nos testes; cada teste define as respostas. */
+    @MockitoBean
+    protected StripeGateway stripe;
 
     private final HttpClient http = HttpClient.newHttpClient();
 

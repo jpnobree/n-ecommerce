@@ -21,6 +21,7 @@
         <springdoc.version>3.1.1</springdoc.version>
         <sentry.version>8.58.0</sentry.version>
         <awssdk.version>2.55.7</awssdk.version>
+        <stripe.version>29.2.0</stripe.version>
     </properties>
 
     <dependencyManagement>
@@ -109,6 +110,13 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>url-connection-client</artifactId>
         </dependency>
+        <!-- API fixada pela versão do SDK; eventos do webhook são lidos como JSON cru (não dependem dela) -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>${stripe.version}</version>
+        </dependency>
+
         <!-- Inativo enquanto SENTRY_DSN estiver vazio -->
         <dependency>
             <groupId>io.sentry</groupId>

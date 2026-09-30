@@ -25,6 +25,7 @@ const MESSAGES: Record<string, string> = {
   CART_EMPTY: 'Sua sacola está vazia.',
   ORDER_TOTAL_TOO_LOW: 'O total mínimo do pedido é R$ 0,50.',
   INVALID_STATUS_TRANSITION: 'Este pedido não pode mais ser alterado.',
+  PAYMENT_UNAVAILABLE: 'Pagamento indisponível no momento. Tente de novo em instantes; seus itens continuam reservados.',
 };
 
 interface Problem {

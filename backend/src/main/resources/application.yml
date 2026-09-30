@@ -59,6 +59,12 @@ app:
     jwt-public-key: ${JWT_PUBLIC_KEY:}
     bootstrap-admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
     bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  # Stripe: chave secreta e segredo do webhook só por variável de ambiente. Sem chave = pagamento indisponível.
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}
+    publishable-key: ${STRIPE_PUBLISHABLE_KEY:}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+    livemode: ${STRIPE_LIVEMODE:false}
   # Imagens: S3, Cloudflare R2 ou MinIO (dev). Em produção, public-base-url aponta para a CDN.
   storage:
     endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}

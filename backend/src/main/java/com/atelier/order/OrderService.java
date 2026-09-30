@@ -11,6 +11,7 @@ import com.atelier.identity.repository.AddressRepository;
 import com.atelier.identity.service.Tokens;
 import com.atelier.shared.error.BusinessException;
 import com.atelier.shared.error.ErrorCode;
+import com.stripe.exception.StripeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -32,7 +33,7 @@ import java.util.stream.Collectors;
 /**
  * Checkout (PRD 9.2): transforma o carrinho em pedido PENDING_PAYMENT com snapshot e estoque reservado por 30 min.
  * Valores vêm só do banco; o cliente manda endereço, opção de frete e a chave de idempotência.
- * O PaymentIntent da Stripe entra na Fase 7, depois do commit (nunca dentro da transação).
+ * O PaymentIntent da Stripe é criado depois, fora da transação ({@link PaymentService#ensureIntent}).
  */
 @Service
 public class OrderService {
@@ -62,10 +63,13 @@ public class OrderService {
     private final NamedParameterJdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final JsonMapper json;
+    private final StripeGateway gateway;
     private final Clock clock;
 
     OrderService(CartService carts, CouponService coupons, InventoryService inventory, ProductDenormalizer denormalizer,
-                 AddressRepository addresses, NamedParameterJdbcTemplate jdbc, TransactionTemplate tx, JsonMapper json, Clock clock) {
+                 AddressRepository addresses, NamedParameterJdbcTemplate jdbc, TransactionTemplate tx, JsonMapper json,
+                 StripeGateway gateway, Clock clock) {
+        this.gateway = gateway;
         this.carts = carts;
         this.coupons = coupons;
         this.inventory = inventory;
@@ -92,10 +96,21 @@ public class OrderService {
             throw new BusinessException(ErrorCode.CART_CHANGED,
                     quote.warnings().stream().map(CartService.Warning::message).collect(Collectors.joining(". ")));
         }
-        return tx.execute(s -> place(userId, key, hash, address, quote, ip, userAgent));
+        long[] replaced = {0};
+        Placed placed = tx.execute(s -> place(userId, key, hash, address, quote, ip, userAgent, replaced));
+        if (replaced[0] > 0) {
+            // O pedido substituído não pode mais ser pago numa aba antiga (se for, o webhook reativa ou reembolsa)
+            try {
+                cancelIntents(replaced[0]);
+            } catch (RuntimeException e) {
+                log.warn("Não cancelou o pagamento do pedido substituído {}", replaced[0], e);
+            }
+        }
+        return placed;
     }
 
-    private Placed place(long userId, UUID key, String hash, Address address, CheckoutQuote quote, String ip, String userAgent) {
+    private Placed place(long userId, UUID key, String hash, Address address, CheckoutQuote quote, String ip, String userAgent,
+                         long[] replaced) {
         // Trava o carrinho: checkouts do mesmo cliente passam um de cada vez daqui em diante
         Integer version = jdbc.queryForObject("SELECT version FROM cart WHERE id = :id FOR UPDATE",
                 new MapSqlParameterSource("id", quote.cartId()), Integer.class);
@@ -115,6 +130,7 @@ public class OrderService {
                 return new Placed(false, response(pendingId)); // nova aba / outra chave com o mesmo carrinho
             }
             cancelLocked(pendingId, "REPLACED"); // cliente mudou a sacola ou o endereço: o pedido novo substitui
+            replaced[0] = pendingId;
         }
 
         var coupon = quote.coupon();
@@ -259,53 +275,98 @@ public class OrderService {
                 rs.getInt(9), rs.getLong(10), rs.getLong(11)));
     }
 
-    /** Cliente cancela um pedido ainda não pago (PRD 11.4). */
+    /** Cliente cancela um pedido ainda não pago (PRD 11.4): primeiro o PaymentIntent, depois reserva e cupom. */
     public OrderView cancel(long userId, String number) {
+        long id = jdbc.query("SELECT id FROM orders WHERE order_number = :number AND user_id = :user",
+                        new MapSqlParameterSource("user", userId).addValue("number", number), (rs, n) -> rs.getLong(1))
+                .stream().findFirst().orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Pedido não encontrado"));
+        if (!cancelIntents(id)) {
+            throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION, "O pagamento já foi feito ou está em processamento");
+        }
         tx.executeWithoutResult(s -> {
-            Long id = jdbc.query("SELECT id FROM orders WHERE order_number = :number AND user_id = :user FOR UPDATE",
-                    new MapSqlParameterSource("user", userId).addValue("number", number), (rs, n) -> rs.getLong(1))
-                    .stream().findFirst().orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Pedido não encontrado"));
+            jdbc.queryForObject("SELECT id FROM orders WHERE id = :id FOR UPDATE", new MapSqlParameterSource("id", id), Long.class);
             if (!cancelLocked(id, "CUSTOMER")) throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION);
         });
         return get(userId, number);
     }
 
     /**
-     * Pedidos não pagos no prazo são cancelados e devolvem estoque e cupom. SKIP LOCKED: várias instâncias
-     * dividem o trabalho sem esperar umas pelas outras. Fase 7: cancelar o PaymentIntent antes.
+     * Pedidos não pagos no prazo são cancelados e devolvem estoque e cupom. O PaymentIntent é cancelado antes
+     * (fora da transação); se já foi pago ou está em processamento, o pedido espera o webhook ou a reconciliação.
+     * Várias instâncias: SKIP LOCKED + a condição de status fazem cada pedido ser liberado uma vez só.
      */
     @Scheduled(fixedDelayString = "${app.checkout.expire-interval:60s}")
     public void expireOverdue() {
-        Integer expired = tx.execute(s -> {
-            List<Long> ids = jdbc.queryForList("""
-                    SELECT id FROM orders WHERE status = 'PENDING_PAYMENT' AND expires_at < :now
-                     ORDER BY expires_at LIMIT 100 FOR UPDATE SKIP LOCKED
-                    """, new MapSqlParameterSource("now", Timestamp.from(clock.instant())), Long.class);
-            ids.forEach(id -> cancelLocked(id, "PAYMENT_TIMEOUT"));
-            return ids.size();
-        });
-        if (expired != null && expired > 0) log.info("{} pedido(s) expirado(s) por falta de pagamento", expired);
+        var now = new MapSqlParameterSource("now", Timestamp.from(clock.instant()));
+        List<Long> ids = jdbc.queryForList("""
+                SELECT id FROM orders WHERE status = 'PENDING_PAYMENT' AND expires_at < :now ORDER BY expires_at LIMIT 100
+                """, now, Long.class);
+        int expired = 0;
+        for (long id : ids) {
+            try {
+                if (!cancelIntents(id)) continue;
+            } catch (RuntimeException e) {
+                log.warn("Stripe indisponível ao expirar o pedido {}; nova tentativa na próxima rodada", id, e);
+                continue;
+            }
+            Boolean done = tx.execute(s -> jdbc.queryForList("""
+                    SELECT id FROM orders WHERE id = :id AND status = 'PENDING_PAYMENT' AND expires_at < :now FOR UPDATE SKIP LOCKED
+                    """, new MapSqlParameterSource("id", id).addValue("now", now.getValue("now")), Long.class)
+                    .stream().anyMatch(x -> cancelLocked(x, "PAYMENT_TIMEOUT")));
+            if (Boolean.TRUE.equals(done)) expired++;
+        }
+        if (expired > 0) log.info("{} pedido(s) expirado(s) por falta de pagamento", expired);
     }
 
-    /** Só sai de PENDING_PAYMENT (idempotente): devolve reserva e uso do cupom. */
-    private boolean cancelLocked(long orderId, String reason) {
+    /**
+     * Cancela na Stripe os intents ainda vivos do pedido. false = algum já foi pago ou está em processamento
+     * (o pedido não pode ser cancelado agora).
+     */
+    boolean cancelIntents(long orderId) {
+        var params = new MapSqlParameterSource("order", orderId);
+        if (Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM payment WHERE order_id = :order AND status IN ('SUCCEEDED', 'PROCESSING'))",
+                params, Boolean.class))) return false;
+        for (String intent : jdbc.queryForList(
+                "SELECT stripe_payment_intent_id FROM payment WHERE order_id = :order AND status <> 'CANCELED'", params, String.class)) {
+            String status;
+            try {
+                status = gateway.cancelIntent(intent);
+            } catch (StripeException e) {
+                throw new BusinessException(ErrorCode.PAYMENT_UNAVAILABLE);
+            }
+            if (!"canceled".equals(status)) return false;
+            jdbc.update("UPDATE payment SET status = 'CANCELED', updated_at = now() WHERE stripe_payment_intent_id = :pi",
+                    new MapSqlParameterSource("pi", intent));
+        }
+        return true;
+    }
+
+    /** Sai de PENDING_PAYMENT ou PAYMENT_PROCESSING (idempotente): devolve reserva e uso do cupom. */
+    boolean cancelLocked(long orderId, String reason) {
         int changed = jdbc.update("""
                 UPDATE orders SET status = 'CANCELLED', cancelled_at = now(), cancel_reason = :reason,
                                   version = version + 1, updated_at = now()
-                 WHERE id = :id AND status = 'PENDING_PAYMENT'
+                 WHERE id = :id AND status IN ('PENDING_PAYMENT', 'PAYMENT_PROCESSING')
                 """, new MapSqlParameterSource("id", orderId).addValue("reason", reason));
         if (changed == 0) return false;
-        Map<Long, Integer> reserved = new HashMap<>();
-        Set<Long> products = new HashSet<>();
-        jdbc.query("SELECT variant_id, quantity, product_id FROM order_item WHERE order_id = :id AND variant_id IS NOT NULL",
-                new MapSqlParameterSource("id", orderId), rs -> {
-                    reserved.merge(rs.getLong(1), rs.getInt(2), Integer::sum);
-                    products.add(rs.getLong(3));
-                });
-        inventory.release(reserved, orderId);
+        inventory.release(itemQuantities(orderId), orderId);
         jdbc.update("UPDATE coupon_usage SET status = 'RELEASED' WHERE order_id = :id AND status = 'RESERVED'",
                 new MapSqlParameterSource("id", orderId));
-        denormalizer.recompute(products);
+        denormalizer.recompute(productIds(orderId));
         return true;
+    }
+
+    /** Quantidade por variante do pedido (itens cuja variante ainda existe). */
+    Map<Long, Integer> itemQuantities(long orderId) {
+        Map<Long, Integer> result = new HashMap<>();
+        jdbc.query("SELECT variant_id, quantity FROM order_item WHERE order_id = :id AND variant_id IS NOT NULL",
+                new MapSqlParameterSource("id", orderId), rs -> { result.merge(rs.getLong(1), rs.getInt(2), Integer::sum); });
+        return result;
+    }
+
+    List<Long> productIds(long orderId) {
+        return jdbc.queryForList("SELECT DISTINCT product_id FROM order_item WHERE order_id = :id AND product_id IS NOT NULL",
+                new MapSqlParameterSource("id", orderId), Long.class);
     }
 }

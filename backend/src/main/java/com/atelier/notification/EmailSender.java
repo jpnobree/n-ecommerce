@@ -13,7 +13,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 /**
  * Envia após o commit, fora da thread da requisição.
  * ponytail: se o processo cair entre o commit e o envio, o e-mail se perde. Aceitável para verificação e
- * redefinição (o usuário pede de novo); e-mails de pedido (Fase 8) passam a usar outbox.
+ * redefinição (o usuário pede de novo); e-mails de pedido usam a {@link Outbox}.
  */
 @Component
 class EmailSender {

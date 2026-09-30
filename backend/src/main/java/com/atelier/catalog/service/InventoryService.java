@@ -18,7 +18,7 @@ import java.util.TreeMap;
 
 /**
  * Estoque por variante. Toda alteração é um UPDATE condicional atômico (sem janela entre ler e escrever)
- * mais uma linha imutável em inventory_movement (PRD, seção 12). Reserva e devolução pelo checkout; baixa (SALE) na Fase 7.
+ * mais uma linha imutável em inventory_movement (PRD, seção 12). Reserva/devolução pelo checkout, baixa no pagamento, retorno no reembolso.
  */
 @Service
 public class InventoryService {
@@ -81,7 +81,7 @@ public class InventoryService {
     public List<Long> reserve(Map<Long, Integer> quantities, long orderId) {
         List<Long> missing = new ArrayList<>();
         new TreeMap<>(quantities).forEach((variantId, qty) -> {
-            if (!apply("RESERVE", variantId, qty, orderId, "i.on_hand - i.reserved >= :qty")) missing.add(variantId);
+            if (!apply("RESERVE", variantId, 0, qty, qty, "ORDER", orderId, "i.on_hand - i.reserved >= :reserved")) missing.add(variantId);
         });
         return missing;
     }
@@ -89,22 +89,38 @@ public class InventoryService {
     /** Devolve a reserva de um pedido cancelado ou expirado antes do pagamento. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void release(Map<Long, Integer> quantities, long orderId) {
-        new TreeMap<>(quantities).forEach((variantId, qty) -> apply("RELEASE", variantId, -qty, orderId, "true")); // CHECK (reserved >= 0) acusa inconsistência
+        new TreeMap<>(quantities).forEach((variantId, qty) -> apply("RELEASE", variantId, 0, -qty, -qty, "ORDER", orderId, "true")); // CHECK (reserved >= 0) acusa inconsistência
     }
 
-    private boolean apply(String type, long variantId, int reservedDelta, long orderId, String condition) {
-        var params = new MapSqlParameterSource().addValue("variantId", variantId).addValue("qty", reservedDelta)
-                .addValue("type", type).addValue("order", orderId);
+    /** Pagamento confirmado: a reserva vira baixa (sai do físico e do reservado). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void commitSale(Map<Long, Integer> quantities, long orderId) {
+        new TreeMap<>(quantities).forEach((variantId, qty) -> apply("SALE", variantId, -qty, -qty, -qty, "ORDER", orderId, "true"));
+    }
+
+    /** Devolução ao estoque (cancelamento pago ou reembolso com restock). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void restock(Map<Long, Integer> quantities, long refundId) {
+        new TreeMap<>(quantities).forEach((variantId, qty) -> apply("RETURN", variantId, qty, 0, qty, "REFUND", refundId, "true"));
+    }
+
+    /** quantity: o número com sinal que vai para o ledger. */
+    private boolean apply(String type, long variantId, int onHandDelta, int reservedDelta, int quantity, String refType,
+                          long refId, String condition) {
+        var params = new MapSqlParameterSource().addValue("variantId", variantId).addValue("onHandDelta", onHandDelta)
+                .addValue("reserved", reservedDelta).addValue("qty", quantity).addValue("type", type)
+                .addValue("refType", refType).addValue("order", refId);
         List<StockLevel> updated = jdbc.query("""
-                UPDATE inventory i SET reserved = i.reserved + :qty, version = i.version + 1, updated_at = now()
+                UPDATE inventory i SET on_hand = i.on_hand + :onHandDelta, reserved = i.reserved + :reserved,
+                                       version = i.version + 1, updated_at = now()
                  WHERE i.variant_id = :variantId AND %s
                 RETURNING i.on_hand, i.reserved
                 """.formatted(condition), params, (rs, n) -> level(rs.getInt(1), rs.getInt(2)));
         if (updated.isEmpty()) return false;
         jdbc.update("""
                 INSERT INTO inventory_movement (variant_id, type, quantity, on_hand_after, reserved_after, reference_type, reference_id)
-                VALUES (:variantId, :type, :qty, :onHand, :reserved, 'ORDER', :order)
-                """, params.addValue("onHand", updated.getFirst().onHand()).addValue("reserved", updated.getFirst().reserved()));
+                VALUES (:variantId, :type, :qty, :onHand, :reservedAfter, :refType, :order)
+                """, params.addValue("onHand", updated.getFirst().onHand()).addValue("reservedAfter", updated.getFirst().reserved()));
         return true;
     }
 

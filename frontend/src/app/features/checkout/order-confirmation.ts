@@ -1,11 +1,12 @@
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, inject, input, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Observable, firstValueFrom } from 'rxjs';
 import { apiErrorMessage } from '../../core/api-errors';
 import { SeoService } from '../../core/seo/seo.service';
 import { MoneyPipe } from '../../shared/money.pipe';
+import { PaymentForm } from './payment-form';
 
 interface Order {
   orderNumber: string;
@@ -38,7 +39,7 @@ const CANCEL_REASON: Record<string, string> = {
 
 @Component({
   selector: 'app-order-confirmation',
-  imports: [RouterLink, MoneyPipe, DatePipe],
+  imports: [RouterLink, MoneyPipe, DatePipe, PaymentForm],
   template: `
     @if (error(); as e) {
       <p class="form-error" role="alert">{{ e }}</p>
@@ -46,10 +47,19 @@ const CANCEL_REASON: Record<string, string> = {
     @if (order(); as o) {
       <h1>Pedido {{ o.orderNumber }}</h1>
       <p><strong>{{ statusLabel(o.status) }}</strong></p>
-      @if (o.status === 'PENDING_PAYMENT') {
+      @if (polling()) {
+        <p class="notice" role="status">Confirmando o pagamento com o banco…</p>
+      } @else if (o.status === 'PENDING_PAYMENT') {
         <p>Seus itens estão reservados até {{ o.expiresAt | date: 'HH:mm' }}.</p>
-        <p class="notice">O pagamento (cartão e Pix) chega na próxima etapa do projeto.</p>
+        <section class="payment" aria-label="Pagamento">
+          <h2>Pagamento</h2>
+          <app-payment-form [orderNumber]="o.orderNumber" (submitted)="poll()" />
+        </section>
         <button type="button" class="link danger" [disabled]="busy()" (click)="cancel(o.orderNumber)">Cancelar pedido</button>
+      } @else if (o.status === 'PAYMENT_PROCESSING') {
+        <p>O banco ainda está processando. Você recebe um e-mail assim que for aprovado.</p>
+      } @else if (o.status === 'PAID') {
+        <p>Pagamento aprovado. Enviamos a confirmação para o seu e-mail.</p>
       } @else if (o.status === 'CANCELLED' && o.cancelReason) {
         <p>Cancelado porque {{ cancelReason(o.cancelReason) }}.</p>
       }
@@ -85,19 +95,42 @@ const CANCEL_REASON: Record<string, string> = {
     }
   `,
 })
-export class OrderConfirmation implements OnInit {
+export class OrderConfirmation implements OnInit, OnDestroy {
   private readonly http = inject(HttpClient);
   readonly number = input.required<string>();
   protected readonly order = signal<Order | null>(null);
   protected readonly error = signal<string | null>(null);
   protected readonly busy = signal(false);
+  /** Voltou da Stripe (3DS/Pix) com o resultado na URL; o status definitivo vem do webhook. */
+  readonly redirect_status = input<string>();
+  protected readonly polling = signal(false);
+  private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
     inject(SeoService).set({ title: 'Pedido', noindex: true });
   }
 
   ngOnInit(): void {
-    void this.load(this.http.get<Order>(`/api/orders/${encodeURIComponent(this.number())}`));
+    if (this.redirect_status() === 'succeeded' || this.redirect_status() === 'processing') this.poll();
+    else void this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    clearTimeout(this.timer);
+  }
+
+  private refresh(): Promise<void> {
+    return this.load(this.http.get<Order>(`/api/orders/${encodeURIComponent(this.number())}`));
+  }
+
+  /** Consulta a cada 2 s por até 30 s enquanto o pedido ainda não saiu de "aguardando pagamento". */
+  protected poll(attempt = 0): void {
+    this.polling.set(true);
+    this.timer = setTimeout(async () => {
+      await this.refresh();
+      if (this.order()?.status === 'PENDING_PAYMENT' && attempt < 15) this.poll(attempt + 1);
+      else this.polling.set(false);
+    }, attempt === 0 ? 0 : 2000);
   }
 
   protected statusLabel(status: string): string {
